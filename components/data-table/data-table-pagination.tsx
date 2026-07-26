@@ -1,19 +1,27 @@
 import { Button } from "@/components/ui/button";
 
 /**
- * Cursor pagination controls (architecture.md §12.3 "cursor-based for
- * large/shared collections"). Purely presentational — the caller owns
- * the cursor state and re-fetches; this just renders the current
- * window and two buttons. "Previous" is safe to offer even though
- * `/api/discovery/search` only ever returns a forward `next_cursor`:
- * a lower cursor re-issues the same search, which is a `search_cache`
+ * Pagination controls over a numeric page window. Purely
+ * presentational — the caller owns the page-start state and re-fetches;
+ * this just renders the current window and two buttons.
+ *
+ * Prop names are deliberately neutral (`pageStart`, not `cursor`) —
+ * architecture.md §12.3 specifies **cursor** pagination for large/shared
+ * collections (`businesses`) but **offset** pagination for small bounded
+ * user lists (favorites, lead lists). This component is the shared UI
+ * for both: Discovery (Sprint 2) calls it with its cursor value, a
+ * future Favorites/Lead list (Sprint 4) would call it with an offset —
+ * same numeric-window mechanics either way, so the component itself
+ * shouldn't imply one over the other. "Previous" is safe to offer even
+ * for Discovery's cursor, which the API only ever advances forward: a
+ * lower page-start re-issues the same search, which is a `search_cache`
  * hit for anything already fetched (architecture.md §6.2), never a new
  * Google call.
  */
 export type DataTablePaginationProps = {
-  cursor: number;
+  pageStart: number;
   pageSize: number;
-  totalCached: number;
+  totalCount: number;
   hasNextPage: boolean;
   onPreviousPage: () => void;
   onNextPage: () => void;
@@ -21,23 +29,23 @@ export type DataTablePaginationProps = {
 };
 
 export function DataTablePagination({
-  cursor,
+  pageStart,
   pageSize,
-  totalCached,
+  totalCount,
   hasNextPage,
   onPreviousPage,
   onNextPage,
   disabled = false,
 }: DataTablePaginationProps) {
-  const rangeStart = totalCached === 0 ? 0 : cursor + 1;
-  const rangeEnd = Math.min(cursor + pageSize, totalCached);
+  const rangeStart = totalCount === 0 ? 0 : pageStart + 1;
+  const rangeEnd = Math.min(pageStart + pageSize, totalCount);
 
   return (
     <div className="flex flex-col-reverse items-center justify-between gap-3 sm:flex-row">
       <p className="text-muted-foreground text-sm">
-        {totalCached === 0
+        {totalCount === 0
           ? "No results"
-          : `Showing ${rangeStart}–${rangeEnd} of ${totalCached}${hasNextPage ? "+" : ""}`}
+          : `Showing ${rangeStart}–${rangeEnd} of ${totalCount}${hasNextPage ? "+" : ""}`}
       </p>
       <div className="flex gap-2">
         <Button
@@ -45,7 +53,7 @@ export function DataTablePagination({
           variant="outline"
           size="sm"
           onClick={onPreviousPage}
-          disabled={disabled || cursor <= 0}
+          disabled={disabled || pageStart <= 0}
         >
           Previous
         </Button>

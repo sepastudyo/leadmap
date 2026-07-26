@@ -17,25 +17,39 @@ import { cn } from "@/lib/utils";
  * Reusable virtualized table (architecture.md §14 "Virtualization:
  * windowed rendering (TanStack Virtual) for the results table", §19
  * "TanStack Table + TanStack Virtual"). Deliberately presentation-only:
- * no sorting/filtering model is wired up (out of scope for this
- * phase — see docs/sprint-2.md) and no data-fetching — the caller owns
- * both. Renders as ARIA grid `div`s rather than a semantic `<table>`
- * because virtualized rows need `position: absolute`, which isn't
- * valid on `<tr>`.
+ * no sorting/filtering model is wired up (out of scope as of Sprint 2 —
+ * see docs/sprint-2.md) and no data-fetching — the caller owns both.
+ * Renders as ARIA grid `div`s rather than a semantic `<table>` because
+ * virtualized rows need `position: absolute`, which isn't valid on
+ * `<tr>`.
+ *
+ * Written to be reused beyond Discovery — Favorites/Lead lists
+ * (Sprint 4), Follow-up lists (Sprint 4), AI opportunity lists
+ * (Sprint 5) — which is why row selection is opt-in (a read-only list
+ * shouldn't have to wire up unused selection state) and row height is
+ * a prop, not a constant (Discovery's rows are single-line; other
+ * lists showing notes/status badges won't be).
  */
 
-const ESTIMATED_ROW_HEIGHT = 44;
+const DEFAULT_ESTIMATED_ROW_HEIGHT = 44;
 const OVERSCAN = 8;
 
 export type DataTableProps<TData> = {
   columns: ColumnDef<TData>[];
   data: TData[];
   getRowId: (row: TData) => string;
-  rowSelection: RowSelectionState;
-  onRowSelectionChange: OnChangeFn<RowSelectionState>;
+  /**
+   * Omit both to render a read-only table with no selection column/state
+   * — `enableRowSelection` is derived from whether these are provided,
+   * not hardcoded.
+   */
+  rowSelection?: RowSelectionState;
+  onRowSelectionChange?: OnChangeFn<RowSelectionState>;
   isLoading?: boolean;
   error?: string | null;
   emptyMessage?: string;
+  /** Row height in px, for the virtualizer's size estimate. Default 44. */
+  estimatedRowHeight?: number;
   /** className on the scrollable viewport — controls the table's height. */
   className?: string;
 };
@@ -49,16 +63,20 @@ export function DataTable<TData>({
   isLoading = false,
   error = null,
   emptyMessage = "No results.",
+  estimatedRowHeight = DEFAULT_ESTIMATED_ROW_HEIGHT,
   className,
 }: DataTableProps<TData>) {
+  const enableRowSelection =
+    rowSelection !== undefined && onRowSelectionChange !== undefined;
+
   const table = useReactTable({
     data,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getRowId,
-    state: { rowSelection },
+    state: enableRowSelection ? { rowSelection } : {},
     onRowSelectionChange,
-    enableRowSelection: true,
+    enableRowSelection,
   });
 
   const rows = table.getRowModel().rows;
@@ -71,7 +89,7 @@ export function DataTable<TData>({
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    estimateSize: () => estimatedRowHeight,
     overscan: OVERSCAN,
   });
 

@@ -232,6 +232,32 @@ on top of this endpoint.
 instruction): Google Maps / Map View, result filtering, result sorting,
 a business detail page, favorites, notes.
 
+**Addendum — `DataTable` genericity review.** Before starting Google
+Maps, reviewed whether `DataTable`/`DataTablePagination` could be
+reused for Favorites, Lead lists, Follow-up lists, and AI opportunity
+lists (Sprint 4/5) without modification. Answer was "not quite" — three
+real coupling points, now fixed:
+
+- `rowSelection`/`onRowSelectionChange` were required props with
+  `enableRowSelection: true` hardcoded, forcing every future consumer
+  (including a purely read-only list) to wire up selection state. Both
+  are now optional; `enableRowSelection` is derived from whether they
+  were passed.
+- Row height was a fixed internal constant. Discovery's rows are
+  single-line, but Lead lists / AI opportunity lists showing notes or
+  status badges likely won't be. Now `estimatedRowHeight?: number`
+  (default 44).
+- `DataTablePagination`'s props were named around "cursor"
+  (`cursor`, `totalCached`) — accurate for Discovery, but architecture.md
+  §12.3 specifies **offset** pagination for small bounded user lists
+  (favorites, lead lists) as distinct from **cursor** pagination for
+  `businesses`. Mechanically both are just numeric page windows, so the
+  component didn't need to change behavior — only its public names,
+  which are now neutral (`pageStart`, `totalCount`). Discovery's own
+  state variables keep their architecture-accurate names
+  (`cursor`, `totalCached`) in `discovery-view.tsx`; only the shared
+  component's prop names changed.
+
 **Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
 and `npm run build` all pass (lint has one benign warning — React
 Compiler flags `useReactTable()` as returning functions it can't safely

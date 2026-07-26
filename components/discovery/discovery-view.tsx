@@ -214,9 +214,9 @@ export function DiscoveryView() {
           />
 
           <DataTablePagination
-            cursor={cursor}
+            pageStart={cursor}
             pageSize={PAGE_SIZE}
-            totalCached={totalCached}
+            totalCount={totalCached}
             hasNextPage={nextCursor !== null}
             onPreviousPage={handlePreviousPage}
             onNextPage={handleNextPage}
