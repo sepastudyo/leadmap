@@ -1,8 +1,9 @@
 /**
- * Google Maps Platform clients: Places Search, Place Details, Geocoding
- * (architecture.md §7). Cache-aware access sits behind this module so a
- * provider change touches one folder.
- *
- * Not implemented yet — scoped for Sprint 2 (Business Discovery).
+ * Google Maps Platform clients (architecture.md §7). Places Search and
+ * Geocoding land in Sprint 2 (Business Discovery); Place Details is
+ * Sprint 3 (Business Intelligence) — not implemented yet.
  */
-export {};
+export * from "./errors";
+export * from "./geocode";
+export * from "./places-search";
+export * from "./types";
