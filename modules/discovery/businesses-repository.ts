@@ -3,7 +3,7 @@ import { inArray, sql } from "drizzle-orm";
 
 import { businesses } from "@/db/schema";
 import type { LatLng } from "@/db/schema/columns";
-import { db } from "@/lib/db";
+import { db, type DbClient } from "@/lib/db";
 
 /**
  * `businesses` repository (architecture.md §5.2, §6.3 "Place ID
@@ -35,10 +35,13 @@ export type UpsertBusinessInput = {
  * conflicting row must take *its own* proposed values, not one shared
  * value.
  */
-export async function upsertBusinesses(inputs: UpsertBusinessInput[]) {
+export async function upsertBusinesses(
+  inputs: UpsertBusinessInput[],
+  dbClient: DbClient = db,
+) {
   if (inputs.length === 0) return [];
 
-  return db
+  return dbClient
     .insert(businesses)
     .values(inputs)
     .onConflictDoUpdate({
@@ -65,10 +68,13 @@ export async function upsertBusinesses(inputs: UpsertBusinessInput[]) {
  * SQL `IN` makes no ordering guarantee, so this reorders in JS after a
  * single batched `IN` query rather than issuing N queries.
  */
-export async function getBusinessesByPlaceIds(placeIds: string[]) {
+export async function getBusinessesByPlaceIds(
+  placeIds: string[],
+  dbClient: DbClient = db,
+) {
   if (placeIds.length === 0) return [];
 
-  const rows = await db
+  const rows = await dbClient
     .select()
     .from(businesses)
     .where(inArray(businesses.googlePlaceId, placeIds));

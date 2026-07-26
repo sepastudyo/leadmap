@@ -38,6 +38,7 @@ const placeSchema = z.object({
 
 const searchTextResponseSchema = z.object({
   places: z.array(placeSchema).optional(),
+  nextPageToken: z.string().optional(),
 });
 
 export type PlaceSearchResult = {
@@ -51,30 +52,58 @@ export type PlaceSearchResult = {
   businessStatus: string | null;
 };
 
-export type SearchPlacesParams = {
-  /** Free-text query, e.g. "coffee shop in Kadıköy, Istanbul, Turkey". */
-  textQuery: string;
-  /** Optional refinement — biases (not restricts) results toward an area. */
-  locationBias?: { center: LatLng; radiusMeters: number };
-  maxResultCount?: number;
+export type SearchPlacesParams =
+  | {
+      /** Free-text query, e.g. "coffee shop in Kadıköy, Istanbul, Turkey". */
+      textQuery: string;
+      /** Optional refinement — biases (not restricts) results toward an area. */
+      locationBias?: { center: LatLng; radiusMeters: number };
+      maxResultCount?: number;
+      pageToken?: undefined;
+    }
+  | {
+      /**
+       * Continues a previous search (architecture.md §8 "Google page
+       * tokens ... stored on the search_cache row so 'load more' can
+       * extend a cached search without restarting it"). Per Google's
+       * Places API (New) contract, a page-token request carries no
+       * other search params — the token itself encodes the original
+       * query server-side.
+       */
+      pageToken: string;
+    };
+
+export type SearchPlacesResponse = {
+  results: PlaceSearchResult[];
+  /** Present when more results exist beyond this page; feed back in as `pageToken`. */
+  nextPageToken: string | null;
 };
 
+function isPageTokenRequest(
+  params: SearchPlacesParams,
+): params is { pageToken: string } {
+  return "pageToken" in params && params.pageToken !== undefined;
+}
+
 /**
- * Runs a Places text search. Never throws for a legitimately empty
- * result set (returns `[]`); throws `GoogleApiError` for transport
- * failures or a response that doesn't match the expected shape.
+ * Runs a Places text search (or continues one via `pageToken`). Never
+ * throws for a legitimately empty result set (`results: []`); throws
+ * `GoogleApiError` for transport failures or a response that doesn't
+ * match the expected shape.
  */
 export async function searchPlaces(
   params: SearchPlacesParams,
   apiKey: string,
   options?: { signal?: AbortSignal },
-): Promise<PlaceSearchResult[]> {
-  const body: Record<string, unknown> = {
-    textQuery: params.textQuery,
-    maxResultCount: params.maxResultCount ?? 20,
-  };
+): Promise<SearchPlacesResponse> {
+  const body: Record<string, unknown> = isPageTokenRequest(params)
+    ? { pageToken: params.pageToken }
+    : {
+        textQuery: params.textQuery,
+        maxResultCount: params.maxResultCount ?? 20,
+      };
 
-  if (params.locationBias) {
+  if (!isPageTokenRequest(params) && params.locationBias) {
     body.locationBias = {
       circle: {
         center: {
@@ -118,7 +147,7 @@ export async function searchPlaces(
     );
   }
 
-  return (parsed.data.places ?? []).map((place) => ({
+  const results = (parsed.data.places ?? []).map((place) => ({
     placeId: place.id,
     name: place.displayName.text,
     formattedAddress: place.formattedAddress,
@@ -128,4 +157,6 @@ export async function searchPlaces(
     primaryType: place.primaryType ?? null,
     businessStatus: place.businessStatus ?? null,
   }));
+
+  return { results, nextPageToken: parsed.data.nextPageToken ?? null };
 }

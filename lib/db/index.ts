@@ -14,3 +14,14 @@ import * as schema from "@/db/schema";
 const client = postgres(env.DATABASE_URL, { prepare: false });
 
 export const db = drizzle(client, { schema });
+
+/**
+ * Repository functions accept this instead of hardcoding `db` so a
+ * caller can pass a `tx` from `db.transaction(...)` and have the work
+ * actually happen inside that transaction (needed for
+ * `modules/discovery/lock.ts`'s advisory-lock idempotency guard —
+ * `pg_advisory_xact_lock` only serializes work done on the same
+ * transaction that holds it).
+ */
+export type DbClient =
+  typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];

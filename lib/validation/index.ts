@@ -5,4 +5,5 @@
  * which is separate from this module.
  */
 export * from "./auth";
+export * from "./discovery";
 export * from "./settings";
