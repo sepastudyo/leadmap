@@ -1,0 +1,100 @@
+name: CI
+
+# Sprint 1 deliverable (docs/sprint-1.md, architecture.md §15): "lint,
+# typecheck, build, and gated forward-only migrations." `verify` runs on
+# every push/PR against a throwaway Postgres service — migrations must
+# apply cleanly before build even runs, which is the "gate." The
+# `migrate-production` job then re-applies the same forward-only
+# migrations to the real database, but only after `verify` passes on
+# `main`, which is what makes it "gated" rather than a direct push.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Non-secret, CI-only values — never used against a real database and
+  # never containing real user data. Real deployments get their own
+  # values from Vercel project environment variables (see README.md
+  # "Deployment").
+  AUTH_SECRET: ci-placeholder-auth-secret-not-for-production-use-only
+  ENCRYPTION_MASTER_KEY: X7t7htFVfohBPedQqc72PkVcAmvxWGM7CltvHZBov0I=
+  NEXT_PUBLIC_APP_URL: http://localhost:3000
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/leadmap_ci
+
+jobs:
+  verify:
+    name: Lint, typecheck, migrate, build
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: leadmap_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Apply migrations (gate)
+        run: npm run db:migrate
+
+      - name: Build
+        run: npm run build
+
+  migrate-production:
+    name: Apply migrations to production
+    # PRODUCTION_DATABASE_URL must be a repository secret, not an
+    # environment secret — environment secrets aren't resolved yet when
+    # a job-level `if:` is evaluated, so this gate would never see them.
+    # `environment: production` below is still worth configuring (for
+    # protection rules / deployment history); just add the secret at
+    # the repo level too. See README.md "Deployment" for the full list
+    # of secrets this workflow expects.
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.PRODUCTION_DATABASE_URL != ''
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Apply forward-only migrations to production
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
