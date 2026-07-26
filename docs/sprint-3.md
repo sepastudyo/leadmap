@@ -229,3 +229,98 @@ against a genuinely malicious/adversarial server (slowloris-style
 trickle responses, a redirect chain that's safe-then-unsafe,
 non-UTF-8 encodings) and, as always, the actual database integration —
 though this phase doesn't touch the database at all.
+
+### Phase 3.3 — HTML parsing, SEO/Metadata/Schema-OG evaluation
+
+All new files live in `modules/intelligence/analysis/`, extending
+Phase 3.2's foundation. No database changes, no Route Handler, no new
+fetches — every evaluation stage below is a pure function over
+Phase 3.2's already-fetched `acquisition.page` (reused via
+`acquireWebsite`, never re-implemented), per instruction ("reuse the
+Website Analyzer foundation ... do not duplicate fetch logic").
+
+- [x] HTML parsing: `parse.ts` (`parseHtml`) — [2 Parse] (§9.1 "Parse
+      HTML with Cheerio (server-side DOM, no JS execution)"). A thin
+      wrapper so Cheerio stays this module's implementation detail
+      rather than every stage file's own dependency.
+- [x] Metadata — title, meta description, canonical detection, favicon
+      detection, language detection: `metadata.ts` (`extractMetadata`)
+      — [3 Metadata] (§9.2). `viewport`/`charset`, also part of §9.2's
+      Metadata bullet, are **not** extracted — not named in this
+      phase's instructions (see the deviation check below).
+- [x] SEO analysis — title/description quality, heading structure
+      (H1–H6), robots meta detection, image alt coverage,
+      internal/external link statistics: `seo.ts` (`analyzeSeo`) —
+      [4 SEO] (§9.2 "title/description quality, single-H1 check,
+      heading hierarchy, canonical correctness, noindex/nofollow,
+      indexability verdict"), extended with alt coverage and link
+      stats as this phase's instructions name explicitly. Robots-meta
+      detection checks **both** `<meta name="robots">` **and** the
+      `X-Robots-Tag` response header (already captured by
+      `FetchedResource.headers` — no new fetch) — either is a valid
+      noindex/nofollow signal per the underlying spec, and only
+      checking the meta tag would miss the header-only case. Heading
+      hierarchy "sequential" means no level is skipped before it's
+      been seen (h1→h3 with no h2 flags; h1→h2→h2→h3 doesn't).
+- [x] Open Graph extraction + Twitter Card extraction:
+      `social-meta.ts` (`extractOpenGraph`, `extractTwitterCard`) —
+      [8 Schema/OG]'s "og:\* coverage" (§9.2), extended to Twitter
+      Card's separate meta-tag namespace as this phase's instructions
+      name explicitly (Twitter Cards aren't named in §9.2's own bullet
+      — see the deviation check below).
+- [x] JSON-LD / Schema.org extraction: `structured-data.ts`
+      (`extractStructuredData`) — [8 Schema/OG]'s "JSON-LD/microdata
+      types present" (§9.2). JSON-LD only; Microdata/RDFa (the other
+      two ways Schema.org can be expressed, also named in that same
+      §9.2 bullet) are not covered — JSON-LD is the dominant modern
+      format and what this phase's instructions name explicitly.
+      Malformed JSON-LD blocks (common in the wild) are counted
+      (`invalidBlockCount`) rather than silently dropped or crashing
+      the whole extraction.
+- [x] Orchestration: `index.ts` gained `analyzePage(url)` —
+      `acquireWebsite` (Phase 3.2, unchanged) → `parseHtml` → every
+      evaluation function above, assembled into one `PageAnalysis`.
+      Evaluation still runs even when the fetched page came back
+      non-2xx (a 404 page has a `<title>` too — reporting that is more
+      useful than silently skipping); only a transport-level failure,
+      already thrown by `acquireWebsite` itself, prevents a result
+      from coming back at all.
+
+**Deliberately not in Phase 3.3** (later Sprint 3 phases, per
+instruction): SSL analysis, CMS detection, tracking detection, Lead
+Scoring, AI, Business Detail Page. No browser automation anywhere in
+this phase or its dependency tree — Cheerio is a server-side HTML
+parser with no JS execution, not a browser.
+
+**Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
+and `npm run build` all pass (same one pre-existing benign warning).
+Verified against real HTML from two live sites (`example.com`,
+`github.com`), not just typecheck — and the real-world data surfaced
+genuine, correctly-detected SEO signals rather than only exercising
+the happy path: GitHub's homepage actually has four `<h1>` elements
+(`hasSingleH1: false`) and a real hierarchy skip
+(`hierarchyIsSequential: false`), and its canonical URL
+(`https://github.com/`) actually doesn't byte-for-byte match its final
+fetched URL (`canonicalMatchesFinalUrl: false`, a trailing-slash
+mismatch) — both are true positives, not test artifacts, which is
+about as strong a confirmation as this sandbox can offer that the
+extraction logic is actually correct and not just non-crashing. Open
+Graph, Twitter Card, image alt coverage, and link statistics all
+produced plausible, internally-consistent numbers on both sites.
+Unverified: behavior on malformed/adversarial HTML (unclosed tags deep
+enough to confuse heading-order tracking, extremely large numbers of
+elements, non-UTF-8 encodings) and, as always, anything requiring a
+live database (still N/A — this phase doesn't touch one either).
+
+**Architecture deviation check for this phase:** three requested items
+aren't literally named in architecture.md §9.2's stage-by-stage bullet
+summary — image alt coverage, internal/external link statistics
+(neither named under "SEO (basic)"), and Twitter Card extraction (§9.2
+names OG coverage but not Twitter Cards). None of these contradict an
+architecture _decision_; §9.2's bullets read as representative
+examples of each stage's output (§9.1's own flow diagram abbreviates
+the same stages even further), not an exhaustive, closed field list,
+and all three fit squarely inside the SEO/Schema-OG stages architecture
+already defines. Treated as elaborations explicitly requested by this
+phase's own instructions, not deviations — see the final answer below
+for the complete, sprint-wide deviation check.

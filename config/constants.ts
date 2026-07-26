@@ -53,3 +53,15 @@ export const ANALYZER_MAX_RESPONSE_BYTES = 2_000_000;
 /** §9.1 "descriptive User-Agent". */
 export const ANALYZER_USER_AGENT =
   "Mozilla/5.0 (compatible; LeadMapAnalyzer/1.0; +https://github.com/sepastudyo/leadmap)";
+
+/**
+ * SEO analysis (architecture.md §9.2 "SEO (basic): title/description
+ * quality"). Not specified in architecture.md — these are conventional
+ * SEO guidelines (title ~50-60 characters, meta description ~120-160
+ * before search engines truncate them), tunable without a schema
+ * change.
+ */
+export const SEO_TITLE_MIN_LENGTH = 10;
+export const SEO_TITLE_MAX_LENGTH = 60;
+export const SEO_DESCRIPTION_MIN_LENGTH = 50;
+export const SEO_DESCRIPTION_MAX_LENGTH = 160;
