@@ -247,7 +247,8 @@ Website Analyzer foundation ... do not duplicate fetch logic").
       detection, language detection: `metadata.ts` (`extractMetadata`)
       — [3 Metadata] (§9.2). `viewport`/`charset`, also part of §9.2's
       Metadata bullet, are **not** extracted — not named in this
-      phase's instructions (see the deviation check below).
+      phase's instructions (see the deviation check below). **Closed**
+      in the post-Phase 3.3 gap closure — see that section below.
 - [x] SEO analysis — title/description quality, heading structure
       (H1–H6), robots meta detection, image alt coverage,
       internal/external link statistics: `seo.ts` (`analyzeSeo`) —
@@ -276,7 +277,8 @@ Website Analyzer foundation ... do not duplicate fetch logic").
       format and what this phase's instructions name explicitly.
       Malformed JSON-LD blocks (common in the wild) are counted
       (`invalidBlockCount`) rather than silently dropped or crashing
-      the whole extraction.
+      the whole extraction. **Closed** in the post-Phase 3.3 gap
+      closure — see that section below.
 - [x] Orchestration: `index.ts` gained `analyzePage(url)` —
       `acquireWebsite` (Phase 3.2, unchanged) → `parseHtml` → every
       evaluation function above, assembled into one `PageAnalysis`.
@@ -324,3 +326,93 @@ and all three fit squarely inside the SEO/Schema-OG stages architecture
 already defines. Treated as elaborations explicitly requested by this
 phase's own instructions, not deviations — see the final answer below
 for the complete, sprint-wide deviation check.
+
+### Gap closure — viewport, charset, Microdata, RDFa (post-Phase 3.3)
+
+Phase 3.3's own deviation check (above) surfaced two genuine gaps
+against architecture.md §9.2's Metadata and Schema/OG bullets —
+`viewport`/`charset` extraction, and Microdata/RDFa as the other two
+ways Schema.org can be expressed alongside JSON-LD. This pass closes
+both, strictly scoped to those four items only (no other stage
+touched), reusing Phase 3.2/3.3's existing HTML parsing pipeline
+without duplicating any parser or fetch logic.
+
+- [x] Viewport meta extraction: `metadata.ts`'s `PageMetadata` gained
+      `viewport: string | null` — the raw `content` of
+      `<meta name="viewport">`, run through the same `normalizeText`
+      helper every other text field already uses. No new selector
+      pattern, no new dependency.
+- [x] Charset extraction: `metadata.ts`'s `PageMetadata` gained
+      `charset: string | null`, resolved through a three-tier fallback
+      matching how real pages actually declare it, in priority order:
+      (1) `<meta charset="...">`'s attribute directly: (2)
+      `<meta http-equiv="Content-Type" content="...; charset=...">`'s
+      `charset` parameter (`http-equiv` matched case-insensitively via
+      `.toLowerCase()` in JS, not a CSS4 attribute-selector `i` flag,
+      since Cheerio's underlying `cheerio-select`/`css-select` support
+      for that flag isn't a given); (3) the HTTP response's own
+      `Content-Type` header's `charset` parameter — already captured by
+      `FetchedResource.headers` from Phase 3.2, so reading it here adds
+      no new network call. `extractMetadata`'s signature grew a third
+      `headers: Record<string, string>` parameter to make tier 3
+      possible; `index.ts`'s `analyzePage` was updated to pass
+      `acquisition.page.headers` through at the one call site.
+- [x] Schema.org Microdata extraction: `structured-data.ts` gained
+      `extractMicrodata` — selects every `[itemscope]` element, reads
+      its `itemtype` attribute (space-separated, so a single element
+      can declare multiple types), and normalizes each token through a
+      new shared `lastPathSegment` helper.
+- [x] Schema.org RDFa extraction: `structured-data.ts` gained
+      `extractRdfa` — selects every `[typeof]` element, same
+      space-separated multi-value handling and normalization as
+      Microdata. RDFa also permits bare vocab-relative terms (e.g.
+      `typeof="LocalBusiness"` alongside a page-level `vocab="
+      https://schema.org/"` attribute, rather than a full URI) —
+      `lastPathSegment` handles this by falling back to the raw token
+      untouched whenever it fails to parse as a URL, without needing to
+      resolve `vocab`/`prefix` context.
+- [x] `StructuredDataResult` restructured from a JSON-LD-only shape
+      into `{ types, jsonLd, microdata, rdfa }`: `types` is now the
+      **union** of type names found across all three formats, and each
+      format's own block/item count and type list is still available
+      under its own key for anything that needs to distinguish them.
+      Safe to restructure — nothing outside `modules/intelligence/analysis/`
+      consumed the old shape yet (confirmed by search: no route, UI
+      component, or other module referenced `StructuredDataResult`,
+      `extractStructuredData`, or `analyzePage`'s return value before
+      this change).
+
+**Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
+and `npm run build` all pass (same one pre-existing benign React
+Compiler / TanStack Table warning, unrelated to this change). Verified
+live against real HTML from three sites, not just typecheck:
+`example.com` (no `<meta charset>`, no `Content-Type` charset param,
+no HTTP header charset param either — `charset: null` is the
+byte-for-byte-correct result, confirmed independently via `curl -sI`),
+`github.com` (`charset: "utf-8"` via the `<meta charset>` tag,
+`viewport: "width=device-width"`), and `schema.org/Person` specifically
+to exercise real-world Microdata (38 `[itemscope]` elements, correctly
+yielding `BreadcrumbList`/`ListItem`/`SoftwareSourceCode` types) and
+confirm the combined `types` union includes results from both JSON-LD
+and Microdata on the same page. RDFa's `[typeof]` selector and the
+`vocab`-relative fallback path in `lastPathSegment` did not have a live
+`[typeof]`-bearing page available in this pass — that specific code
+path is covered by the general JSON-LD/Microdata normalization logic
+being identical (same function, same tokenizing), but is worth a
+targeted live check against a known RDFa page (e.g. a Drupal or
+Wikipedia page using RDFa Lite) in a later phase if one touches this
+module again.
+
+**Architecture deviation check for this pass:** none against an
+architecture _decision_. Viewport, charset, and Microdata are named
+directly in architecture.md §9.2's own Metadata and Schema/OG bullets
+("title, desc, lang, viewport, canonical, favicon, charset" and
+"JSON-LD/microdata types present"). RDFa itself isn't literally named
+in §9.2's bullet or §9.1's flow diagram — same situation as Twitter
+Card in Phase 3.3: explicitly named by this pass's own instructions,
+fits squarely inside the Schema/OG stage §9.2 already defines (a third
+syntax for the same "Schema.org types present" signal JSON-LD and
+Microdata already cover), and §9.2's bullets read as representative
+examples rather than an exhaustive, closed field list throughout this
+sprint. Treated as an elaboration explicitly requested by this pass's
+instructions, not a deviation. Nothing else was touched.

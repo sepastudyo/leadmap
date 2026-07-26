@@ -97,7 +97,11 @@ export async function analyzePage(url: string): Promise<PageAnalysis> {
   const acquisition = await acquireWebsite(url);
   const $ = parseHtml(acquisition.page.body);
 
-  const metadata = extractMetadata($, acquisition.page.finalUrl);
+  const metadata = extractMetadata(
+    $,
+    acquisition.page.finalUrl,
+    acquisition.page.headers,
+  );
   const seo = analyzeSeo($, metadata, {
     finalUrl: acquisition.page.finalUrl,
     headers: acquisition.page.headers,
