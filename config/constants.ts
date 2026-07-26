@@ -33,3 +33,6 @@ export const SEARCH_RATE_LIMIT_WINDOW_MS = 60_000;
  * Idempotency-Key row).
  */
 export const IDEMPOTENCY_KEY_TTL_HOURS = 24;
+
+/** §6.1 "Place Details (name/phone/website/hours) | ~30 days (ToS-bounded)". */
+export const PLACE_DETAILS_TTL_DAYS = 30;
