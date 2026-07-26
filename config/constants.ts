@@ -36,3 +36,20 @@ export const IDEMPOTENCY_KEY_TTL_HOURS = 24;
 
 /** §6.1 "Place Details (name/phone/website/hours) | ~30 days (ToS-bounded)". */
 export const PLACE_DETAILS_TTL_DAYS = 30;
+
+/**
+ * Website Analysis acquisition pipeline (architecture.md §9.1 [1
+ * Acquire]: "cap redirects, cap response size, enforce timeout"; §13.5
+ * P0 SSRF control: "cap redirects, cap size, enforce timeouts"). No
+ * exact numbers are specified in architecture.md; these are
+ * conservative starting points sized to fit comfortably within a
+ * serverless function's time/memory budget (§18 "Serverless function
+ * time budget is the tightest real constraint"), tunable without a
+ * schema change.
+ */
+export const ANALYZER_TIMEOUT_MS = 8_000;
+export const ANALYZER_MAX_REDIRECTS = 5;
+export const ANALYZER_MAX_RESPONSE_BYTES = 2_000_000;
+/** §9.1 "descriptive User-Agent". */
+export const ANALYZER_USER_AGENT =
+  "Mozilla/5.0 (compatible; LeadMapAnalyzer/1.0; +https://github.com/sepastudyo/leadmap)";

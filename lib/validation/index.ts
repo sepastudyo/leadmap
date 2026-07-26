@@ -4,6 +4,7 @@
  * is built. See `config/env.ts` for server environment validation,
  * which is separate from this module.
  */
+export * from "./analysis";
 export * from "./auth";
 export * from "./discovery";
 export * from "./idempotency";

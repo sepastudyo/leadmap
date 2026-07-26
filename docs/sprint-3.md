@@ -101,3 +101,131 @@ limitation noted throughout Sprint 2), so `getOrRefreshPlaceDetails`'s
 actual behavior against a real database and a real Place ID is
 unverified beyond typecheck + code review — worth a manual pass once a
 caller exists to exercise it end-to-end.
+
+### Phase 3.2 — Website Analyzer foundation: HTTP fetch pipeline, SSRF protection
+
+All of this lives in `modules/intelligence/analysis/`, the subfolder
+architecture.md §4 already names for exactly this ("analysis/ — website
+analysis pipeline + stages"). No database changes, no Route Handler —
+same "foundation first, HTTP surface later" split as Phase 2.1/3.1.
+
+- [x] Website Analyzer foundation: `modules/intelligence/analysis/index.ts`
+      exports `acquireWebsite(url)` — architecture.md §9.1's [1 Acquire]
+      stage. Fetches the page and robots.txt concurrently (independent
+      of each other), then discovers/fetches the sitemap (depends on
+      robots.txt's declared URLs) — reduces total latency against the
+      serverless time budget (§18) without changing any stage's
+      guarantees. The page fetch failing propagates (nothing to analyze
+      without it); robots.txt/sitemap failures don't (§9.3 "a failing
+      stage yields status = partial") — they're optional signals, not
+      the page under analysis.
+- [x] HTTP fetch pipeline: `guarded-fetch.ts` (`guardedFetch`) — the
+      shared SSRF/timeout/redirect/size-guarded GET every acquisition
+      target goes through. Redirects are followed **manually** (a loop,
+      `redirect: "manual"`), not via `fetch`'s built-in follower —
+      that's what makes both "redirect limits" and re-validating SSRF
+      safety on every hop possible; the built-in follower supports
+      neither.
+- [x] robots.txt retrieval: `robots.ts` (`fetchRobotsTxt`) — fetches
+      `/robots.txt` and extracts `Sitemap:` directive URLs for discovery.
+      Full directive evaluation (User-agent/Disallow/Allow matching,
+      §9.2's fuller "directives" scope) is a later phase — this phase is
+      retrieval only, as scoped.
+- [x] Sitemap discovery: `sitemap.ts` (`discoverSitemap`) — tries
+      robots.txt-declared sitemap URL(s) first, falls back to the
+      conventional `/sitemap.xml`. Parsing the sitemap's URL list /
+      staleness (§9.2) is a later phase; this phase discovers and
+      retrieves it, as scoped.
+- [x] HTML download: `page.ts` (`fetchPage`) — a thin wrapper over
+      `guardedFetch` for the target page itself.
+- [x] Response normalization: every fetch (page, robots.txt, sitemap)
+      returns the same `FetchedResource` shape (`requestedUrl`,
+      `finalUrl`, `status`, `ok`, `headers`, `body`, `bytesRead`,
+      `redirectCount`, `elapsedMs`) regardless of which of the three it
+      came from — later stages (Cheerio parsing, metadata/SEO/etc.,
+      still not implemented) consume one consistent type rather than
+      three ad hoc ones.
+- [x] SSRF protection: `ssrf-guard.ts` — architecture.md §13.5's P0
+      control. Default-deny via `ipaddr.js`'s address classification
+      (only `"unicast"` is allowed; every other category — private,
+      loopback, linkLocal (which is what actually catches
+      `169.254.169.254`, the cloud-metadata endpoint), uniqueLocal,
+      carrierGradeNat, reserved, multicast, ...) is blocked, including
+      IPv4 addresses smuggled inside IPv4-mapped IPv6 literals
+      (`::ffff:169.254.169.254`). Wired in as a custom `lookup` function
+      passed to an `undici` `Agent` via `connect: { lookup }` — not a
+      "resolve once, then fetch normally" pre-check, which would leave
+      a DNS-rebinding gap open across `guardedFetch`'s redirect hops.
+      Building this required `undici` and `ipaddr.js` as new explicit
+      dependencies (`undici` was already present transitively — it's
+      what Node's own global `fetch` is built on — but a P0 control is
+      exactly the place to depend on it directly rather than an
+      undeclared transitive resolution; `ipaddr.js` because hand-rolling
+      IPv6 CIDR/range matching is exactly the kind of code prone to the
+      subtle bugs that defeat a security control).
+- [x] Timeout handling: `AbortSignal.timeout(ANALYZER_TIMEOUT_MS)` per
+      request (8s default, `config/constants.ts`), composed with any
+      caller-supplied signal via `AbortSignal.any`.
+- [x] Redirect limits: `ANALYZER_MAX_REDIRECTS` (5 default) enforced by
+      `guardedFetch`'s manual redirect loop, re-validating SSRF safety
+      on every hop.
+- [x] Content size limits: `ANALYZER_MAX_RESPONSE_BYTES` (2MB default)
+      enforced by streaming the response body and aborting once the cap
+      is exceeded, rather than buffering an unbounded response first.
+- [x] Input validation: `lib/validation/analysis.ts`
+      (`analysisTargetUrlSchema`, `z.url({ protocol: /^https?$/ })`) —
+      reuses the established `lib/validation/*` pattern (one file per
+      domain, re-exported from `lib/validation/index.ts`). This is
+      _input_ validation (is the string a well-formed http(s) URL),
+      distinct from the SSRF _security control_ (is it safe to actually
+      connect to) — a syntactically valid `https://` URL can still
+      resolve to a blocked address.
+
+**A real bug caught by live verification, not typecheck:** the first
+version of `safeLookup` always called back with the single-address
+`(err, address, family)` signature. Node's custom `lookup` contract
+actually has **two** shapes depending on the caller-supplied
+`options.all` — undici's `Agent` calls with `all: true` (for Happy
+Eyeballs / RFC 8305 dual-stack racing), which expects `(err,
+addresses[])` instead. Getting this wrong didn't create a security
+hole (blocked addresses were still blocked), but it broke **every**
+request, safe or not — `guardedFetch("https://example.com")` failed
+with `ERR_INVALID_IP_ADDRESS`. Typecheck and lint were both clean
+throughout; only running the code against real DNS/network I/O
+surfaced it. Fixed by branching on `options.all` and, for the
+multi-address case, filtering to public addresses rather than
+rejecting the whole resolution if any single record was unsafe — more
+correct for genuine dual-stack hosts, and no less safe, since the
+non-public records are excluded from the candidate list entirely, not
+merely deprioritized.
+
+**Deliberately not in Phase 3.2** (later Sprint 3 phases, per
+instruction): SEO analysis, OpenGraph analysis, Schema.org extraction,
+CMS detection, tracking detection, SSL analysis, Lead Scoring, Business
+Detail Page, AI. No Cheerio/HTML parsing either — every stage that
+would consume it ([3]–[8] in §9.1's flow) is excluded, so parsing ahead
+of any consumer would be dead code; `FetchedResource.body` is available
+as plain text for whichever phase adds it. No browser automation
+anywhere in this phase or dependency tree (Playwright/Puppeteer) — HTTP
+only, per instruction and per architecture.md §9's own "No headless
+browser" framing.
+
+**Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
+and `npm run build` all pass (same one pre-existing benign warning).
+Unlike every prior phase, this one **was** exercised against real
+network I/O — this sandbox has outbound internet access even without a
+database, so a standalone script (mirroring how the EWKB parser was
+verified in Sprint 2) ran the actual code, not just a description of
+it: `isPublicAddress` against 25 known addresses spanning every
+relevant range (public IPv4/IPv6, RFC1918, loopback, the cloud-metadata
+endpoint, CGNAT, multicast, reserved, IPv4-mapped IPv6 in both safe and
+unsafe forms) — all correct; `guardedFetch` against a real public site
+(succeeded), loopback/metadata/private/`localhost` targets (all
+correctly blocked), a real HTTP→HTTPS redirect (followed, reported
+`redirectCount: 1`), `maxRedirects: 0` against that same redirecting
+URL (correctly rejected), and a byte cap far smaller than a real
+response (correctly rejected). What's still unverified: behavior
+against a genuinely malicious/adversarial server (slowloris-style
+trickle responses, a redirect chain that's safe-then-unsafe,
+non-UTF-8 encodings) and, as always, the actual database integration —
+though this phase doesn't touch the database at all.
