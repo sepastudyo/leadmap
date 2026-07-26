@@ -376,7 +376,73 @@ browser, and the failure modes (a misconfigured referrer restriction,
 an `importLibrary` version mismatch, a marker icon URL going stale)
 aren't things typecheck can catch.
 
-### Remaining Sprint 2 phases
+### Final review — closing the sort/filter gap
 
-- [ ] Result filtering.
-- [ ] Result sorting.
+A final pass against architecture.md §17 ("**Table View** (filter/sort/
+paginate/virtualize)") and §8 ("TABLE VIEW sortable · filterable")
+found one real gap: Phases 2.3 and 2.4 were both explicitly scoped to
+exclude sorting and filtering ("Do NOT implement: ... filters,
+sorting"), which was the right call for keeping those phases reviewable
+— but sort/filter are Sprint 2 deliverables in architecture.md, not a
+later sprint's, so Sprint 2 wasn't actually done until they existed.
+Closed here, still Sprint-2-scoped (no new API surface):
+
+- [x] Sorting: `DataTable` gained optional `sorting`/`onSortingChange`
+      props (`getSortedRowModel`, mirroring the row-selection opt-in
+      pattern already established — omit both to disable sorting
+      table-wide regardless of any column's own `enableSorting`).
+      Sortable column headers are clickable, with a lucide
+      `ArrowUp`/`ArrowDown`/`ArrowUpDown` indicator and
+      `aria-sort`. Enabled on every `discoveryColumns` entry except the
+      selection checkbox. The `rating` column needed an explicit
+      `accessorFn` (it only had a custom `cell` before, so TanStack had
+      nothing to sort by) — worth noting: TanStack's `sortUndefined`
+      option checks `=== undefined`, not `null`, so the accessor
+      normalizes the DB's `null` rating to `undefined` for that to work;
+      unrated businesses sort last in either direction.
+- [x] Filtering: category (substring, case-insensitive) and minimum
+      rating (3+/4+/4.5+), added as controls in `discovery-view.tsx`.
+      Client-side over the current page's already-fetched results, per
+      §8 "client-side for the current page" — no new query parameters,
+      no change to `/api/discovery/search`. The filtered array is
+      computed once (`useMemo`) and passed to **both** `DataTable` and
+      `MapView`, so map markers and table rows are always the same
+      filtered set — extending "the table and the map must consume the
+      same source of truth" (Phase 2.4's instruction) to cover this new
+      derived state too, not just the raw search results.
+      `has-website`/`score band`/`distance` — the other three filters
+      §8 names — are **not** implemented: `has-website` needs
+      `businesses.website_url` (always null until Sprint 3 Place
+      Details), `score band` needs `lead_scores` (doesn't exist until
+      Sprint 3's Lead Score engine), and `distance` needs a reference
+      point (user location or a map center) that no part of this app
+      currently captures. These are data-availability gaps inherited
+      from Sprint 2's own scope boundary (no Place Details, no scoring),
+      not an oversight — filed as Sprint 3 follow-ups below.
+
+**Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
+and `npm run build` all pass (same one benign React Compiler / TanStack
+Table warning as every prior phase). Confirmed no test suite exists in
+this repo (`package.json` has no `test` script, no test framework is a
+dependency) — consistent with none having been a deliverable in Sprint
+1 or Sprint 2, so there was nothing to run. HTTP-smoke-tested the
+auth-gated routes touched by Sprint 2 one more time:
+`GET /discovery` and `GET /api/discovery/maps-key` both correctly
+reject unauthenticated requests. As with every phase before it, the
+actual rendered sort/filter interaction has not been visually verified
+in a browser (per this project's standing instruction against browser
+automation) — see "Manual verification recommended before Sprint 3"
+below for the consolidated list.
+
+## Sprint 2 — Final status: complete
+
+Every item in architecture.md §17's Sprint 2 line and §8's discovery
+flow is implemented: Google clients, staged search, `businesses` +
+`search_cache` with Cache-First read-through and Place ID dedup, a
+sortable/filterable/paginated/virtualized Table View, a Map View with
+markers and the referrer-restricted browser key, and Postgres-backed
+rate limiting on search. Idempotency (§12.4) is implemented as
+literally specified after the Phase 2.2 revision. See the Sprint 2
+completion report delivered alongside the `sprint-2-complete` tag for
+the full implemented/excluded/technical-debt/manual-verification
+breakdown.

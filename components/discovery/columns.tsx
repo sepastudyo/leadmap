@@ -16,13 +16,16 @@ function formatRating(business: DiscoveryBusiness): string {
 }
 
 /**
- * Column definitions for the Discovery results table. No sort/filter
- * handlers — this phase renders columns only (see docs/sprint-2.md).
+ * Column definitions for the Discovery results table. Sorting
+ * (architecture.md §8 "TABLE VIEW sortable") is enabled on every data
+ * column except the selection checkbox — sorting by a checkbox isn't
+ * meaningful, so that one opts out explicitly.
  */
 export const discoveryColumns: ColumnDef<DiscoveryBusiness>[] = [
   {
     id: "select",
     size: 40,
+    enableSorting: false,
     header: ({ table }) => (
       <Checkbox
         checked={table.getIsAllPageRowsSelected()}
@@ -71,6 +74,13 @@ export const discoveryColumns: ColumnDef<DiscoveryBusiness>[] = [
   },
   {
     id: "rating",
+    // `sortUndefined` only special-cases `undefined`, not `null`
+    // (TanStack Table's row-sorting internals check `=== undefined`
+    // exactly) — so the `null` DB value has to be normalized here.
+    // Unrated businesses sort last regardless of direction: an unrated
+    // business isn't "worse" than a 0-star one, it's simply unranked.
+    accessorFn: (row) => row.googleRating ?? undefined,
+    sortUndefined: "last",
     header: "Rating",
     size: 110,
     cell: ({ row }) => formatRating(row.original),

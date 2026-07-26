@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import type { RowSelectionState } from "@tanstack/react-table";
+import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 
 import { DataTable } from "@/components/data-table/data-table";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -17,8 +17,18 @@ import type { DiscoveryBusiness } from "./types";
 /**
  * Staged search UI + orchestration for the Discovery page. Consumes
  * the existing `/api/discovery/search` endpoint directly (client-side
- * `fetch`) — no server action, no new API surface. Result filtering /
- * sorting / a business detail page are later Sprint 2 phases (see
+ * `fetch`) — no server action, no new API surface.
+ *
+ * Filtering (architecture.md §8: "Filters (rating, has-website,
+ * category, score band, distance) apply to the returned/cached set —
+ * client-side for the current page") only covers `category` and
+ * `rating` here — `has-website` needs `businesses.website_url`
+ * (Sprint 3 Place Details), `score band` needs `lead_scores` (Sprint 3
+ * Lead Score engine), and `distance` needs a reference point this app
+ * has no UI for yet. Those three filter on data that doesn't exist
+ * until later sprints, not a Sprint 2 gap.
+ *
+ * A business detail page is a later Sprint 2/3 concern (see
  * docs/sprint-2.md).
  */
 
@@ -87,6 +97,9 @@ export function DiscoveryView() {
   const [errorCode, setErrorCode] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+  const [sorting, setSorting] = React.useState<SortingState>([]);
+  const [categoryFilter, setCategoryFilter] = React.useState("");
+  const [minRating, setMinRating] = React.useState("");
   const [view, setView] = React.useState<"table" | "map">("table");
   const [hasOpenedMap, setHasOpenedMap] = React.useState(false);
 
@@ -157,6 +170,33 @@ export function DiscoveryView() {
     if (next === "map") setHasOpenedMap(true);
   }
 
+  // architecture.md §8 — client-side filtering over the current page's
+  // already-fetched results. Table and Map both render this same
+  // filtered array (not two separately-filtered copies), so what's
+  // visible in one is exactly what's visible in the other.
+  const filteredBusinesses = React.useMemo(() => {
+    const minRatingValue = minRating === "" ? null : Number(minRating);
+    const categoryQuery = categoryFilter.trim().toLowerCase();
+
+    return businesses.filter((business) => {
+      if (
+        categoryQuery &&
+        !business.category.toLowerCase().includes(categoryQuery)
+      ) {
+        return false;
+      }
+      if (
+        minRatingValue !== null &&
+        (business.googleRating === null ||
+          business.googleRating < minRatingValue)
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [businesses, categoryFilter, minRating]);
+
+  const isFiltered = categoryFilter.trim() !== "" || minRating !== "";
   const selectedCount = Object.values(rowSelection).filter(Boolean).length;
   const isLoading = status === "loading";
 
@@ -218,30 +258,65 @@ export function DiscoveryView() {
 
       {submittedForm ? (
         <div className="flex flex-1 flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant={view === "table" ? "default" : "outline"}
-                onClick={() => handleViewChange("table")}
-              >
-                Table
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={view === "map" ? "default" : "outline"}
-                onClick={() => handleViewChange("map")}
-              >
-                Map
-              </Button>
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="discovery-filter-category">
+                  Filter by category
+                </Label>
+                <Input
+                  id="discovery-filter-category"
+                  value={categoryFilter}
+                  onChange={(event) => setCategoryFilter(event.target.value)}
+                  className="sm:w-40"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="discovery-filter-rating">Min. rating</Label>
+                <select
+                  id="discovery-filter-rating"
+                  value={minRating}
+                  onChange={(event) => setMinRating(event.target.value)}
+                  className="border-input focus-visible:border-ring focus-visible:ring-ring/50 dark:bg-input/30 h-8 rounded-lg border bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:ring-3"
+                >
+                  <option value="">Any</option>
+                  <option value="3">3+</option>
+                  <option value="4">4+</option>
+                  <option value="4.5">4.5+</option>
+                </select>
+              </div>
+              {isFiltered && (
+                <p className="text-muted-foreground pb-1.5 text-sm">
+                  Showing {filteredBusinesses.length} of {businesses.length}
+                </p>
+              )}
             </div>
-            {selectedCount > 0 && (
-              <p className="text-muted-foreground text-sm">
-                {selectedCount} selected
-              </p>
-            )}
+
+            <div className="flex items-center gap-3">
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={view === "table" ? "default" : "outline"}
+                  onClick={() => handleViewChange("table")}
+                >
+                  Table
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={view === "map" ? "default" : "outline"}
+                  onClick={() => handleViewChange("map")}
+                >
+                  Map
+                </Button>
+              </div>
+              {selectedCount > 0 && (
+                <p className="text-muted-foreground text-sm">
+                  {selectedCount} selected
+                </p>
+              )}
+            </div>
           </div>
 
           <div
@@ -251,17 +326,23 @@ export function DiscoveryView() {
           >
             <DataTable
               columns={discoveryColumns}
-              data={businesses}
+              data={filteredBusinesses}
               getRowId={getBusinessId}
               rowSelection={rowSelection}
               onRowSelectionChange={setRowSelection}
+              sorting={sorting}
+              onSortingChange={setSorting}
               isLoading={isLoading}
               error={
                 status === "error" && errorCode !== "GOOGLE_API_KEY_MISSING"
                   ? errorMessage
                   : null
               }
-              emptyMessage="No businesses found for this search."
+              emptyMessage={
+                isFiltered
+                  ? "No businesses match these filters."
+                  : "No businesses found for this search."
+              }
               className="h-[560px]"
             />
 
@@ -279,7 +360,7 @@ export function DiscoveryView() {
           {hasOpenedMap && (
             <div className={view === "map" ? "flex flex-1 flex-col" : "hidden"}>
               <MapView
-                businesses={businesses}
+                businesses={filteredBusinesses}
                 rowSelection={rowSelection}
                 onRowSelectionChange={setRowSelection}
                 getRowId={getBusinessId}

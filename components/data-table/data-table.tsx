@@ -5,11 +5,14 @@ import {
   type ColumnDef,
   type OnChangeFn,
   type RowSelectionState,
+  type SortingState,
   flexRender,
   getCoreRowModel,
+  getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -17,18 +20,22 @@ import { cn } from "@/lib/utils";
  * Reusable virtualized table (architecture.md §14 "Virtualization:
  * windowed rendering (TanStack Virtual) for the results table", §19
  * "TanStack Table + TanStack Virtual"). Deliberately presentation-only:
- * no sorting/filtering model is wired up (out of scope as of Sprint 2 —
- * see docs/sprint-2.md) and no data-fetching — the caller owns both.
+ * no filtering model, and no data-fetching — the caller owns both.
  * Renders as ARIA grid `div`s rather than a semantic `<table>` because
  * virtualized rows need `position: absolute`, which isn't valid on
  * `<tr>`.
  *
+ * Sorting (architecture.md §8 "TABLE VIEW sortable · filterable") is
+ * client-side, over whatever `data` the caller already has loaded — no
+ * new API surface, matching §8 "Filters ... apply to the returned/
+ * cached set — client-side for the current page."
+ *
  * Written to be reused beyond Discovery — Favorites/Lead lists
  * (Sprint 4), Follow-up lists (Sprint 4), AI opportunity lists
- * (Sprint 5) — which is why row selection is opt-in (a read-only list
- * shouldn't have to wire up unused selection state) and row height is
- * a prop, not a constant (Discovery's rows are single-line; other
- * lists showing notes/status badges won't be).
+ * (Sprint 5) — which is why row selection and sorting are both opt-in
+ * (a read-only list shouldn't have to wire up unused state) and row
+ * height is a prop, not a constant (Discovery's rows are single-line;
+ * other lists showing notes/status badges won't be).
  */
 
 const DEFAULT_ESTIMATED_ROW_HEIGHT = 44;
@@ -45,6 +52,10 @@ export type DataTableProps<TData> = {
    */
   rowSelection?: RowSelectionState;
   onRowSelectionChange?: OnChangeFn<RowSelectionState>;
+  /** Omit both to disable sorting entirely, table-wide, regardless of
+   * any column's own `enableSorting`. */
+  sorting?: SortingState;
+  onSortingChange?: OnChangeFn<SortingState>;
   isLoading?: boolean;
   error?: string | null;
   emptyMessage?: string;
@@ -60,6 +71,8 @@ export function DataTable<TData>({
   getRowId,
   rowSelection,
   onRowSelectionChange,
+  sorting,
+  onSortingChange,
   isLoading = false,
   error = null,
   emptyMessage = "No results.",
@@ -68,15 +81,22 @@ export function DataTable<TData>({
 }: DataTableProps<TData>) {
   const enableRowSelection =
     rowSelection !== undefined && onRowSelectionChange !== undefined;
+  const enableSorting = sorting !== undefined && onSortingChange !== undefined;
 
   const table = useReactTable({
     data,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: enableSorting ? getSortedRowModel() : undefined,
     getRowId,
-    state: enableRowSelection ? { rowSelection } : {},
+    state: {
+      ...(enableRowSelection ? { rowSelection } : {}),
+      ...(enableSorting ? { sorting } : {}),
+    },
     onRowSelectionChange,
+    onSortingChange,
     enableRowSelection,
+    enableSorting,
   });
 
   const rows = table.getRowModel().rows;
@@ -141,20 +161,49 @@ export function DataTable<TData>({
         style={{ gridTemplateColumns }}
       >
         {table.getHeaderGroups().map((headerGroup) =>
-          headerGroup.headers.map((header) => (
-            <div
-              key={header.id}
-              role="columnheader"
-              className="text-muted-foreground flex items-center px-3 py-2 text-left text-xs font-medium whitespace-nowrap"
-            >
-              {header.isPlaceholder
-                ? null
-                : flexRender(
-                    header.column.columnDef.header,
-                    header.getContext(),
-                  )}
-            </div>
-          )),
+          headerGroup.headers.map((header) => {
+            const canSort = header.column.getCanSort();
+            const sortDirection = header.column.getIsSorted();
+            const content = header.isPlaceholder
+              ? null
+              : flexRender(header.column.columnDef.header, header.getContext());
+
+            return (
+              <div
+                key={header.id}
+                role="columnheader"
+                aria-sort={
+                  sortDirection === "asc"
+                    ? "ascending"
+                    : sortDirection === "desc"
+                      ? "descending"
+                      : canSort
+                        ? "none"
+                        : undefined
+                }
+                className="text-muted-foreground flex items-center px-3 py-2 text-left text-xs font-medium whitespace-nowrap"
+              >
+                {canSort ? (
+                  <button
+                    type="button"
+                    onClick={header.column.getToggleSortingHandler()}
+                    className="hover:text-foreground flex items-center gap-1"
+                  >
+                    {content}
+                    {sortDirection === "asc" ? (
+                      <ArrowUp className="size-3.5" />
+                    ) : sortDirection === "desc" ? (
+                      <ArrowDown className="size-3.5" />
+                    ) : (
+                      <ArrowUpDown className="size-3.5 opacity-40" />
+                    )}
+                  </button>
+                ) : (
+                  content
+                )}
+              </div>
+            );
+          }),
         )}
       </div>
 
