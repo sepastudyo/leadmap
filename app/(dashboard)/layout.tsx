@@ -29,6 +29,12 @@ export default async function DashboardLayout({
             LeadMap
           </Link>
           <Link
+            href="/discovery"
+            className="text-muted-foreground hover:text-foreground text-sm"
+          >
+            Discovery
+          </Link>
+          <Link
             href="/settings"
             className="text-muted-foreground hover:text-foreground text-sm"
           >

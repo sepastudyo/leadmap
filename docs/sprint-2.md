@@ -169,9 +169,86 @@ available in this sandbox. Worth a manual pass against a real database
 and a real Google API key before Phase 2.3 (Table/Map View) builds a UI
 on top of this endpoint.
 
+### Phase 2.3 — Discovery page UI, DataTable, pagination UI, row selection
+
+- [x] Discovery page: `app/(dashboard)/discovery/page.tsx` — a thin RSC
+      shell (auth already gated by `app/(dashboard)/layout.tsx`, which
+      now also links to it) rendering `components/discovery/discovery-view.tsx`,
+      a client component owning the staged search form (Country/City/
+      District/Category/Keyword — `district` and `keyword` optional,
+      matching `lib/validation/discovery.ts`), cursor state, and row
+      selection. Calls `POST /api/discovery/search` directly with the
+      browser's own `fetch` (same-origin, so the session cookie is sent
+      automatically) — no server action, no new endpoint, per
+      instruction ("the table must consume the existing discovery
+      API").
+- [x] `@tanstack/react-table` + `@tanstack/react-virtual` (architecture.md
+      §14, §19) — installed and used together in `components/data-table/data-table.tsx`.
+- [x] Reusable `DataTable` component (`components/data-table/data-table.tsx`)
+      — generic over row type, presentation-only (no fetching, no
+      sort/filter model). Renders as ARIA `role="table"/"row"/"cell"`
+      `div`s rather than a semantic `<table>`, because virtualized rows
+      need `position: absolute`, which is invalid on `<tr>` — a
+      `gridTemplateColumns` computed from each column's `size` keeps the
+      sticky header and virtualized body rows aligned.
+- [x] Column definitions: `components/discovery/columns.tsx`
+      (`discoveryColumns: ColumnDef<DiscoveryBusiness>[]`) — a selection
+      checkbox column plus Name/Category/City/District/Rating/Address,
+      covering exactly the fields Sprint 2 actually populates (no
+      Phone/Website columns — those stay null until Sprint 3's Place
+      Details). No `accessorFn`-driven sort comparators or filter
+      predicates attached, since sorting/filtering are out of scope.
+- [x] Loading state: skeleton rows (`DataTable`, shown while
+      `isLoading && data.length === 0`).
+- [x] Empty state: dashed-border placeholder, shown for a genuine
+      zero-result search — distinct from the "haven't searched yet"
+      placeholder `DiscoveryView` shows before the first submit.
+- [x] Error state: an `role="alert"` panel showing the API's error
+      message — except `GOOGLE_API_KEY_MISSING`, which `DiscoveryView`
+      intercepts and renders as an inline message linking to
+      `/settings` (Sprint 1's Settings page) instead of a generic table
+      error, since it's directly actionable.
+- [x] Cursor pagination UI: `components/data-table/data-table-pagination.tsx`
+      — Previous/Next, "Showing X–Y of Z" (`+` when a `next_cursor`
+      means more exist). "Previous" is offered even though the API only
+      ever returns a forward cursor: stepping back re-issues the same
+      search at a lower offset, which is a `search_cache` hit for
+      anything already fetched (architecture.md §6.2) — never a new
+      Google call.
+- [x] Row selection: `components/ui/checkbox.tsx` (new — `@base-ui/react/checkbox`,
+      matching the existing Button/Input/Label primitives' pattern) +
+      TanStack Table's built-in `rowSelection` state, lifted to
+      `DiscoveryView` (`getRowId` keyed on `business.id`, so selection
+      survives a page's data changing identity). A "N selected" line
+      appears above the table; there's no bulk action to attach it to
+      yet (favorites is Sprint 4), so this phase only proves selection
+      state works.
+- [x] Responsive layout: search form wraps top-to-bottom on narrow
+      viewports (`flex-col`) and to a single wrapped row on `sm:`+; the
+      table's own scroll container (`overflow-auto`) handles narrow
+      viewports by scrolling horizontally rather than squeezing columns.
+
+**Deliberately not in Phase 2.3** (later Sprint 2 phases, per
+instruction): Google Maps / Map View, result filtering, result sorting,
+a business detail page, favorites, notes.
+
+**Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
+and `npm run build` all pass (lint has one benign warning — React
+Compiler flags `useReactTable()` as returning functions it can't safely
+memoize, a known, documented interaction with TanStack Table, not a
+defect). HTTP-smoke-tested against a running dev server:
+`GET /discovery` unauthenticated correctly redirects to `/sign-in`
+(307), same as every other `(dashboard)` route. Per this project's
+standing instruction not to use browser automation, the actual
+rendered UI — table virtualization at scroll, loading/empty/error
+states, checkbox selection, responsive breakpoints — has **not** been
+visually verified in a browser and is unverified beyond typecheck +
+code review. Worth an actual manual click-through (ideally against a
+real database + Google API key, so real search results populate the
+table) before Sprint 3 assumes this page works end-to-end.
+
 ### Remaining Sprint 2 phases
 
-- [ ] Table View (sort/filter/paginate/virtualize).
 - [ ] Map View (Google Maps JS, referrer-restricted key).
-- [ ] Staged search UI (the Country → City → District → Category →
-      Keyword form itself — the backend flow it drives is done).
+- [ ] Result filtering.
+- [ ] Result sorting.
