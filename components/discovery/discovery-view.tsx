@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import type { RowSelectionState } from "@tanstack/react-table";
 
 import { DataTable } from "@/components/data-table/data-table";
@@ -16,12 +17,31 @@ import type { DiscoveryBusiness } from "./types";
 /**
  * Staged search UI + orchestration for the Discovery page. Consumes
  * the existing `/api/discovery/search` endpoint directly (client-side
- * `fetch`) — no server action, no new API surface. Google Maps / result
- * filtering / sorting / a business detail page are later Sprint 2
- * phases (see docs/sprint-2.md).
+ * `fetch`) — no server action, no new API surface. Result filtering /
+ * sorting / a business detail page are later Sprint 2 phases (see
+ * docs/sprint-2.md).
  */
 
 const PAGE_SIZE = 20;
+
+/** Stable reference — shared by DataTable and MapView so neither re-runs
+ * effects/memoization on every render just because a new inline
+ * closure was passed. */
+function getBusinessId(business: DiscoveryBusiness): string {
+  return business.id;
+}
+
+// `ssr: false` + dynamic import is the actual lazy-load: neither this
+// component's code nor the Google Maps JS bundle it pulls in downloads
+// until `hasOpenedMap` (below) causes it to mount for the first time.
+const MapView = dynamic(() => import("./map-view"), {
+  ssr: false,
+  loading: () => (
+    <div className="border-border flex h-[560px] items-center justify-center rounded-lg border">
+      <p className="text-muted-foreground text-sm">Loading map…</p>
+    </div>
+  ),
+});
 
 type FormState = {
   country: string;
@@ -67,6 +87,8 @@ export function DiscoveryView() {
   const [errorCode, setErrorCode] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+  const [view, setView] = React.useState<"table" | "map">("table");
+  const [hasOpenedMap, setHasOpenedMap] = React.useState(false);
 
   const runSearch = React.useCallback(
     async (searchForm: FormState, targetCursor: number) => {
@@ -130,6 +152,11 @@ export function DiscoveryView() {
     void runSearch(submittedForm, Math.max(0, cursor - PAGE_SIZE));
   }
 
+  function handleViewChange(next: "table" | "map") {
+    setView(next);
+    if (next === "map") setHasOpenedMap(true);
+  }
+
   const selectedCount = Object.values(rowSelection).filter(Boolean).length;
   const isLoading = status === "loading";
 
@@ -191,37 +218,75 @@ export function DiscoveryView() {
 
       {submittedForm ? (
         <div className="flex flex-1 flex-col gap-3">
-          {selectedCount > 0 && (
-            <p className="text-muted-foreground text-sm">
-              {selectedCount} selected
-            </p>
-          )}
+          <div className="flex items-center justify-between">
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={view === "table" ? "default" : "outline"}
+                onClick={() => handleViewChange("table")}
+              >
+                Table
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={view === "map" ? "default" : "outline"}
+                onClick={() => handleViewChange("map")}
+              >
+                Map
+              </Button>
+            </div>
+            {selectedCount > 0 && (
+              <p className="text-muted-foreground text-sm">
+                {selectedCount} selected
+              </p>
+            )}
+          </div>
 
-          <DataTable
-            columns={discoveryColumns}
-            data={businesses}
-            getRowId={(business) => business.id}
-            rowSelection={rowSelection}
-            onRowSelectionChange={setRowSelection}
-            isLoading={isLoading}
-            error={
-              status === "error" && errorCode !== "GOOGLE_API_KEY_MISSING"
-                ? errorMessage
-                : null
+          <div
+            className={
+              view === "table" ? "flex flex-1 flex-col gap-3" : "hidden"
             }
-            emptyMessage="No businesses found for this search."
-            className="h-[560px]"
-          />
+          >
+            <DataTable
+              columns={discoveryColumns}
+              data={businesses}
+              getRowId={getBusinessId}
+              rowSelection={rowSelection}
+              onRowSelectionChange={setRowSelection}
+              isLoading={isLoading}
+              error={
+                status === "error" && errorCode !== "GOOGLE_API_KEY_MISSING"
+                  ? errorMessage
+                  : null
+              }
+              emptyMessage="No businesses found for this search."
+              className="h-[560px]"
+            />
 
-          <DataTablePagination
-            pageStart={cursor}
-            pageSize={PAGE_SIZE}
-            totalCount={totalCached}
-            hasNextPage={nextCursor !== null}
-            onPreviousPage={handlePreviousPage}
-            onNextPage={handleNextPage}
-            disabled={isLoading}
-          />
+            <DataTablePagination
+              pageStart={cursor}
+              pageSize={PAGE_SIZE}
+              totalCount={totalCached}
+              hasNextPage={nextCursor !== null}
+              onPreviousPage={handlePreviousPage}
+              onNextPage={handleNextPage}
+              disabled={isLoading}
+            />
+          </div>
+
+          {hasOpenedMap && (
+            <div className={view === "map" ? "flex flex-1 flex-col" : "hidden"}>
+              <MapView
+                businesses={businesses}
+                rowSelection={rowSelection}
+                onRowSelectionChange={setRowSelection}
+                getRowId={getBusinessId}
+                className="h-[560px]"
+              />
+            </div>
+          )}
         </div>
       ) : (
         <div className="border-border text-muted-foreground rounded-lg border border-dashed p-10 text-center text-sm">

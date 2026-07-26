@@ -273,8 +273,110 @@ code review. Worth an actual manual click-through (ideally against a
 real database + Google API key, so real search results populate the
 table) before Sprint 3 assumes this page works end-to-end.
 
+### Phase 2.4 — Google Maps JS integration, Map View
+
+- [x] Google Maps JavaScript API integration: `@googlemaps/js-api-loader`
+      (Google's official loader), using its current functional API
+      (`setOptions`/`importLibrary`) — the class-based `Loader` the
+      package also exports is marked deprecated in its own types, so
+      that older pattern was deliberately not used.
+- [x] Map View: `components/discovery/map-view.tsx`, toggled against
+      Table View via a Table/Map switch in `discovery-view.tsx`
+      (architecture.md §3 "Table View ... and a Map View").
+- [x] Marker rendering: classic `google.maps.Marker`, one per business,
+      `title` set to the business name; click opens an `InfoWindow`
+      built from `document.createElement`/`textContent` (not
+      `innerHTML` — business name/category ultimately come from
+      Google's API response, which §13.3 treats as untrusted, so this
+      closes off any injection vector regardless of how unlikely).
+      `AdvancedMarkerElement` (Google's newer, recommended marker API)
+      was deliberately not used — it requires a Map ID configured in
+      Google Cloud Console, which has no field anywhere in this app's
+      settings model (§5.2); classic `Marker` needs no such setup and
+      remains fully supported.
+- [x] Table ↔ map synchronization: `MapView` receives the exact same
+      `businesses` array `DiscoveryView` already passes to `DataTable`
+      — a new search, a page change, anything that updates that one
+      array flows into both views through props, with no second fetch
+      and no separate copy of business state.
+- [x] Selected row ↔ selected marker synchronization: `MapView` also
+      receives the same `rowSelection` state and `onRowSelectionChange`
+      setter the table uses. A selected row's marker renders with a
+      distinct icon (blue vs. the default red pin); clicking a marker
+      toggles that same row's entry in `rowSelection` — one shared
+      selection model, read and written from both views, not two
+      models kept in sync.
+- [x] Map viewport persistence: center + zoom written to
+      `sessionStorage` (`leadmap:discovery:map-viewport`) on the map's
+      `idle` event, restored on init. Combined with `MapView` staying
+      mounted (CSS-hidden, not unmounted) once first opened — see lazy
+      loading below — the viewport also survives Table/Map toggles and
+      new searches within a session, not just page reloads. On a truly
+      fresh session (nothing stored yet), the map fits bounds to the
+      current results once; it doesn't re-fit on every subsequent
+      search, so it doesn't yank a view the user has already adjusted.
+- [x] Lazy loading of the Maps bundle: `MapView` is imported via
+      `next/dynamic(() => import("./map-view"), { ssr: false })` in
+      `discovery-view.tsx`, and that dynamic import is only ever
+      referenced once `hasOpenedMap` becomes true — i.e. the first time
+      the user clicks the Map tab. Neither `MapView`'s own code nor the
+      actual Google Maps JS bundle it triggers (`importLibrary` calls
+      inside it) downloads for a session that never opens Map View.
+- [x] Browser API key usage exactly as defined in §7: a new, narrow,
+      dedicated endpoint (`GET /api/discovery/maps-key`) is the only
+      code path that returns the Google API key to the client, and it
+      returns _only_ `{ googleApiKey }` — nothing else from
+      `user_settings`. The server-side key used by
+      `modules/discovery/search.ts` for Places/Geocoding is decrypted
+      in a completely separate code path that never constructs an HTTP
+      response containing it. `MapView` calls this endpoint once, on
+      init, and feeds the result straight into `setOptions()` — it's
+      never logged, stored beyond the component's own closure, or
+      echoed back in any other response. Per §7.2, this key reaching
+      the browser is not a leak: Maps JS keys are "exposed to the
+      client by necessity," and the security boundary is the
+      HTTP-referrer restriction the user configures in Google Cloud
+      Console, not secrecy on our side. This app's schema (Sprint 1)
+      stores one Google API key, not the separate server/browser pair
+      §7.2 also describes as supported — so today that one key is both
+      the server key `modules/discovery/search.ts` uses and the value
+      this endpoint hands to the browser. That's the "one
+      appropriately-restricted key" configuration §7.2 explicitly
+      endorses, not a workaround; a second, browser-only key field
+      isn't implied by anything in this phase's instructions and would
+      be new Settings-page scope, not Map View scope.
+- [x] Clustering: not implemented. Each page holds at most
+      `SEARCH_PAGE_SIZE_MAX` (20) businesses, and the map only ever
+      renders the current page's markers — nowhere near the marker
+      count where clustering earns its complexity, so it isn't
+      technically required (per instruction, "unless technically
+      required").
+
+**Deliberately not in Phase 2.4** (later Sprint 2 phases or later
+sprints, per instruction): business detail page, favorites, notes, AI,
+website analysis, Place Details, result filtering, result sorting.
+
+**Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
+and `npm run build` all pass (same one benign React Compiler /
+TanStack Table warning as Phase 2.3, plus a `react-hooks/exhaustive-deps`
+ref-in-cleanup warning that was fixed properly — the ref's `Map` object
+is captured into a local variable before the effect's cleanup closure
+reads it — rather than suppressed). HTTP-smoke-tested against a running
+dev server: `GET /api/discovery/maps-key` unauthenticated correctly
+returns `401`, and `GET /discovery` unauthenticated still redirects to
+`/sign-in`. As with Phase 2.3, the actual rendered map — marker
+placement, click-to-select, InfoWindow content, viewport persistence
+across a real reload, referrer-restriction behavior with a real
+Google Maps key — has **not** been visually verified in a browser (per
+this project's standing instruction against browser automation) and is
+unverified beyond typecheck + code review. This is the piece of Sprint
+2 most worth a real manual pass before relying on it: it's the first
+code in this project that talks to a live third-party JS SDK in the
+browser, and the failure modes (a misconfigured referrer restriction,
+an `importLibrary` version mismatch, a marker icon URL going stale)
+aren't things typecheck can catch.
+
 ### Remaining Sprint 2 phases
 
-- [ ] Map View (Google Maps JS, referrer-restricted key).
 - [ ] Result filtering.
 - [ ] Result sorting.
