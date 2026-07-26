@@ -6,4 +6,5 @@
  */
 export * from "./auth";
 export * from "./discovery";
+export * from "./idempotency";
 export * from "./settings";

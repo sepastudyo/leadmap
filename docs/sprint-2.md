@@ -110,36 +110,61 @@ this layer works end-to-end.
       requests per `60s` (`config/constants.ts`, tunable). Exhaustion
       returns `429` + `Retry-After`; every response carries
       `X-RateLimit-*` headers.
-- [x] Idempotency (architecture.md §12.4 "client retries don't
-      double-spend the user's Google/AI quota") — **not** a client
-      `Idempotency-Key` header, deliberately: architecture.md §5.2 has no
-      table to durably store one in, and the search signature
-      (architecture.md §6.3) already _is_ a deterministic idempotency
-      key. What was missing was concurrency safety, which Phase 2.1
-      didn't have — two simultaneous identical searches could both miss
-      the cache and both call Google. `modules/discovery/lock.ts` closes
-      that gap with a Postgres transaction-scoped advisory lock
-      (`pg_advisory_xact_lock(hashtextextended(signature, 0))`, released
-      automatically on commit/rollback — no Redis, same "Postgres does
-      it" posture as rate limiting) keyed on the search signature; every
-      waiter re-checks the cache after acquiring the lock instead of
-      assuming it still needs to do the work. This required threading a
-      `DbClient` (`lib/db/index.ts`) through the repository layer so
-      work done "inside the lock" actually runs on the same transaction
-      that holds it — a bare `db.transaction()` whose callback still
-      called the module-level `db` would take the lock on one
-      connection and do the real work on another, silently defeating it.
+- [x] Idempotency (architecture.md §12.4), **implemented as literally
+      specified** — a client-supplied `Idempotency-Key` header; the
+      first successful response is stored and replayed verbatim on a
+      repeat with the same key, so Google is never called twice for the
+      same attempt (`lib/idempotency/index.ts`, wired into the Route
+      Handler). This revises the first version of Phase 2.2, which
+      argued the search signature + an advisory lock already satisfied
+      §12.4's intent and skipped the header entirely — on review, that
+      was a real deviation from the spec (different retry semantics, no
+      cross-action reuse for the analyze/AI actions §12.4 also names,
+      no literal response replay), not an equivalent implementation.
+      Concretely:
+  - `idempotency_keys` — a new table, added to `docs/architecture.md`
+    §5.2/§5.4/§6.1 as part of this change rather than left undocumented,
+    since no existing table (`rate_limits`, `audit_logs`) is shaped for
+    a keyed response payload with its own short expiry, and Vercel
+    functions are stateless per invocation (no in-memory option).
+    `(user_id, bucket, key)` unique; `bucket` scopes a key to one action
+    so the table is reusable for `business.analyze` / `ai.audit` later.
+    `request_hash` detects a key reused for a different request body
+    (409 Conflict, not a mismatched replay).
+  - Only **successful** (2xx) responses are stored — a failed attempt
+    (validation error, missing Google key, rate limited, upstream
+    failure) stays freely retryable under the same key.
+  - A replay is checked **before** rate limiting, so it costs nothing
+    against the caller's quota — it isn't a new action.
+  - TTL is 24h (`IDEMPOTENCY_KEY_TTL_HOURS`, `config/constants.ts`) —
+    "short," per §12.4, not `search_cache`'s multi-day window; same
+    opportunistic-purge-on-read pattern as everything else in §6.4.
+  - The Phase 2.1 advisory lock (`modules/discovery/lock.ts`) is
+    **kept**, per instruction, as an internal concurrency-control
+    detail — it now composes with the Idempotency-Key layer rather than
+    substituting for it. The two guard different failures: the lock
+    stops _any_ concurrent caller (same client or not, with or without
+    a key) from double-spending on the _same search content_;
+    Idempotency-Key stops _one client's own retry_ of _one specific
+    call_. A client that reuses a key for an identical search is
+    protected twice, redundantly but harmlessly; a client that doesn't
+    send a key at all still gets the lock's protection, same as before.
 
 **Deliberately not in Phase 2.2** (later Sprint 2 phases): Table View,
 Map View, any UI, result filtering, result sorting.
 
 **Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
-and `npm run build` all pass. HTTP-smoke-tested the route against a
-running dev server: an unauthenticated `POST /api/discovery/search`
-correctly returns `401` with the standard error envelope. The
-authenticated path (real search → cache write → pagination → rate
-limit exhaustion → concurrent-request lock behavior) is unverified
-beyond typecheck + review — no live Postgres or Google API key is
+and `npm run build` all pass, both for the initial Phase 2.2 pass and
+after the Idempotency-Key revision (migration
+`0004_idempotency_keys.sql` generated cleanly, no manual fix needed
+this time). HTTP-smoke-tested against a running dev server: an
+unauthenticated `POST /api/discovery/search` correctly returns `401`
+with the standard error envelope, including when an `Idempotency-Key`
+header is present (the auth check still short-circuits before any
+idempotency logic runs). The authenticated path — real search, cache
+write, pagination extension, rate-limit exhaustion, idempotent replay,
+key-reuse conflict, concurrent-request lock behavior — is unverified
+beyond typecheck + review; no live Postgres or Google API key is
 available in this sandbox. Worth a manual pass against a real database
 and a real Google API key before Phase 2.3 (Table/Map View) builds a UI
 on top of this endpoint.

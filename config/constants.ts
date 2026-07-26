@@ -24,3 +24,12 @@ export const SEARCH_PAGE_SIZE_MAX = 20;
  */
 export const SEARCH_RATE_LIMIT_MAX = 20;
 export const SEARCH_RATE_LIMIT_WINDOW_MS = 60_000;
+
+/**
+ * §12.4 "the first result is stored briefly and replayed on retry" —
+ * long enough to cover realistic client retries (a page reload, a
+ * mobile client resuming after a dropped connection), short because
+ * this is a safety net, not a cache (see architecture.md §6.1's
+ * Idempotency-Key row).
+ */
+export const IDEMPOTENCY_KEY_TTL_HOURS = 24;

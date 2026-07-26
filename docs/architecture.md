@@ -238,6 +238,10 @@ _One current row per business. On a manual re-run, the row is updated and (optio
 **`audit_logs`** — lightweight security trail (auth events, key changes, rule edits)
 `id (uuid pk)` · `user_id (nullable)` · `action` · `entity_type` · `entity_id (nullable)` · `metadata (jsonb)` · `ip` · `occurred_at`
 
+**`idempotency_keys`** — USER plane (backs §12.4's `Idempotency-Key` mechanism)
+`id (uuid pk)` · `user_id (fk)` · `bucket (text — the paid action, e.g. "discovery.search")` · `key (text — the client-supplied Idempotency-Key)` · `request_hash (text — detects a key reused for a different request)` · `response_status (int)` · `response_body (jsonb — the exact response to replay)` · `created_at` · `expires_at` · **unique `(user_id, bucket, key)`**
+_Added during Sprint 2 implementation, outside this document's original entity list — §12.4 specifies that a paid action's "first result is stored briefly and replayed on retry," which has no other durable home: Vercel functions are stateless per invocation (no in-memory option), and no other table is shaped for a keyed response payload with its own short expiry. Only successful (2xx) responses are stored; failed attempts remain freely retryable. `bucket` makes the table reusable for the other §12.4 actions (`business.analyze`, `ai.audit`/`ai.opportunity`) as those ship in later sprints._
+
 ### 5.3 Relationships
 
 - `users 1─1 user_settings`
@@ -247,6 +251,7 @@ _One current row per business. On a manual re-run, the row is updated and (optio
 - `businesses 1─1 lead_scores`
 - `search_cache *→ businesses` by Place ID (logical, via `place_ids`)
 - `scoring_rulesets *─* scoring_rules` (via `rule_keys`)
+- `users 1─* idempotency_keys`
 
 ### 5.4 Indexes
 
@@ -264,6 +269,7 @@ _One current row per business. On a manual re-run, the row is updated and (optio
 | `notes`               | btree `(user_id, business_id, created_at desc)`                                       | Note timeline                      |
 | `ai_results`          | unique `(user_id, business_id, type, input_hash)`                                     | AI cache hits                      |
 | `rate_limits`         | unique `(subject, bucket, window_start)`                                              | Atomic counter upserts             |
+| `idempotency_keys`    | unique `(user_id, bucket, key)`; btree `expires_at`                                   | Replay lookup + expiry sweeps      |
 | soft-deletable tables | **partial** indexes `WHERE deleted_at IS NULL`                                        | Keep hot sets small                |
 
 ### 5.5 Normalization, soft deletes, growth
@@ -280,15 +286,16 @@ Cache First is implemented entirely in Postgres. There is no separate cache serv
 
 ### 6.1 What is cached, and for how long
 
-| Data                                           | Table                                             | TTL                                           | Rationale                                                                               |
-| ---------------------------------------------- | ------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------- |
-| **Place ID** (identity)                        | `businesses.google_place_id`                      | **Indefinite**                                | Place IDs are stable identifiers permitted for long-term storage; the dedup backbone    |
-| **Search results** (Place ID list for a query) | `search_cache`                                    | **7–14 days** (configurable)                  | Search intent is stable short-term; refresh keeps results current                       |
-| **Place Details** (name/phone/website/hours)   | `businesses.place_summary` + `details_expires_at` | **~30 days** (ToS-bounded)                    | Bounded caching for performance within Google's terms                                   |
-| **Website analysis**                           | `website_analyses` + `expires_at`                 | **30–90 days** (our data)                     | This is _our_ derived data; longer TTL is fine, but stale analysis is re-run on request |
-| **Lead score**                                 | `lead_scores`                                     | Recomputed when analysis or ruleset changes   | Derived; cheap to recompute                                                             |
-| **AI results**                                 | `ai_results`                                      | Indefinite until inputs change (`input_hash`) | The user paid tokens; never re-spend for identical input                                |
-| **Ratings / reviews text / photo bytes**       | **not stored**                                    | —                                             | Refreshed live via Place Details / rendered by reference; see ToS note (§7)             |
+| Data                                           | Table                                             | TTL                                           | Rationale                                                                                   |
+| ---------------------------------------------- | ------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| **Place ID** (identity)                        | `businesses.google_place_id`                      | **Indefinite**                                | Place IDs are stable identifiers permitted for long-term storage; the dedup backbone        |
+| **Search results** (Place ID list for a query) | `search_cache`                                    | **7–14 days** (configurable)                  | Search intent is stable short-term; refresh keeps results current                           |
+| **Place Details** (name/phone/website/hours)   | `businesses.place_summary` + `details_expires_at` | **~30 days** (ToS-bounded)                    | Bounded caching for performance within Google's terms                                       |
+| **Website analysis**                           | `website_analyses` + `expires_at`                 | **30–90 days** (our data)                     | This is _our_ derived data; longer TTL is fine, but stale analysis is re-run on request     |
+| **Lead score**                                 | `lead_scores`                                     | Recomputed when analysis or ruleset changes   | Derived; cheap to recompute                                                                 |
+| **AI results**                                 | `ai_results`                                      | Indefinite until inputs change (`input_hash`) | The user paid tokens; never re-spend for identical input                                    |
+| **Idempotency-Key responses** (§12.4)          | `idempotency_keys` + `expires_at`                 | **24 hours** (short, configurable)            | Long enough to cover realistic client retries; short because it's a safety net, not a cache |
+| **Ratings / reviews text / photo bytes**       | **not stored**                                    | —                                             | Refreshed live via Place Details / rendered by reference; see ToS note (§7)                 |
 
 ### 6.2 TTL and refresh (lazy, read-through)
 
