@@ -47,6 +47,16 @@ function isFresh(detailsExpiresAt: Date | null): boolean {
   return detailsExpiresAt !== null && detailsExpiresAt.getTime() > Date.now();
 }
 
+export type RefreshOptions = {
+  /** Sprint 7 Phase 7.6 (architecture.md §6.4 "Manual: a user can
+   * force-refresh a business ... an explicit, user-triggered
+   * invalidation"). Bypasses the freshness check below unconditionally
+   * — the only caller that sets this is the new manual-refresh route;
+   * every other caller omits it and gets the normal §6.2 behavior
+   * unchanged. */
+  force?: boolean;
+};
+
 /**
  * §6.2 read-through: fresh row → serve from Postgres, no Google call;
  * stale/missing → call Google within this request, persist, return the
@@ -55,11 +65,12 @@ function isFresh(detailsExpiresAt: Date | null): boolean {
 export async function getOrRefreshPlaceDetails(
   userId: string,
   businessId: string,
+  options?: RefreshOptions,
 ) {
   const business = await getBusinessById(businessId);
   if (!business) throw new BusinessNotFoundError();
 
-  if (isFresh(business.detailsExpiresAt)) return business;
+  if (!options?.force && isFresh(business.detailsExpiresAt)) return business;
 
   const settings = await getDecryptedKeys(userId);
   if (!settings) throw new GoogleApiKeyMissingError();

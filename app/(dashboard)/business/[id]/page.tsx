@@ -10,6 +10,7 @@ import { LeadScoreCard } from "@/components/business/lead-score-card";
 import type { NoteDto } from "@/components/business/notes-panel";
 import { NotesPanel } from "@/components/business/notes-panel";
 import { OpportunityPanel } from "@/components/business/opportunity-panel";
+import { RefreshPanel } from "@/components/business/refresh-panel";
 import { auth } from "@/auth";
 import {
   getFavoriteByUserAndBusiness,
@@ -102,26 +103,30 @@ export default async function BusinessDetailPage({
 
   return (
     <div className="flex flex-1 flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-semibold">{current.name}</h1>
-        <p className="text-muted-foreground text-sm">
-          {current.category}
-          {location && ` · ${location}`}
-        </p>
-        <p className="text-muted-foreground text-sm">{current.address}</p>
-        <div className="mt-1 flex flex-wrap gap-3 text-sm">
-          {current.phone && <span>{current.phone}</span>}
-          {current.websiteUrl && (
-            <a
-              href={current.websiteUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary underline underline-offset-4"
-            >
-              {current.websiteUrl}
-            </a>
-          )}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">{current.name}</h1>
+          <p className="text-muted-foreground text-sm">
+            {current.category}
+            {location && ` · ${location}`}
+          </p>
+          <p className="text-muted-foreground text-sm">{current.address}</p>
+          <div className="mt-1 flex flex-wrap gap-3 text-sm">
+            {current.phone && <span>{current.phone}</span>}
+            {current.websiteUrl && (
+              <a
+                href={current.websiteUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary underline underline-offset-4"
+              >
+                {current.websiteUrl}
+              </a>
+            )}
+          </div>
         </div>
+
+        <RefreshPanel businessId={id} />
       </div>
 
       {googleApiKeyMissing && (

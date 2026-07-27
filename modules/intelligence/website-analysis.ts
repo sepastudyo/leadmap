@@ -1,6 +1,7 @@
 import "server-only";
 
 import { captureException } from "@/lib/observability";
+import { getBusinessById } from "@/modules/discovery";
 
 import {
   analyzePage,
@@ -8,6 +9,15 @@ import {
   getWebsiteAnalysis,
   persistAnalysis,
 } from "./analysis";
+import { BusinessNotFoundError } from "./place-details";
+
+export type AnalysisRefreshOptions = {
+  /** Sprint 7 Phase 7.6 (architecture.md §6.4 "Manual: ... re-run
+   * analysis ... an explicit, user-triggered invalidation"). Bypasses
+   * the freshness check below unconditionally — only the new manual-
+   * refresh route sets this; every other caller is unchanged. */
+  force?: boolean;
+};
 
 /**
  * Website Analysis read-through (architecture.md §6.2 lazy TTL refresh,
@@ -22,9 +32,16 @@ import {
 export async function getOrRunWebsiteAnalysis(
   businessId: string,
   websiteUrl: string | null,
+  options?: AnalysisRefreshOptions,
 ) {
   const existing = await getWebsiteAnalysis(businessId);
-  if (existing && existing.expiresAt.getTime() > Date.now()) return existing;
+  if (
+    !options?.force &&
+    existing &&
+    existing.expiresAt.getTime() > Date.now()
+  ) {
+    return existing;
+  }
 
   // No website on file — nothing to analyze. Serve whatever was
   // previously persisted (a business can lose its website URL between
@@ -48,4 +65,25 @@ export async function getOrRunWebsiteAnalysis(
     captureException(error);
     return existing;
   }
+}
+
+/**
+ * Sprint 7 Phase 7.6 — the manual-refresh route's entry point.
+ * `getOrRunWebsiteAnalysis` above takes `(businessId, websiteUrl)`
+ * rather than looking the business up itself, matching every one of
+ * its three existing callers (the Business Detail Page RSC,
+ * `modules/ai/audit.ts`, `modules/ai/opportunity.ts`), all of which
+ * already have the business in hand before calling it — so this thin
+ * wrapper does the one thing none of those needed: resolve `businessId`
+ * to a business (throwing `BusinessNotFoundError` if it doesn't exist,
+ * the same class `getOrRefreshPlaceDetails` already uses) before
+ * force-running analysis against its current `websiteUrl`.
+ */
+export async function refreshWebsiteAnalysis(businessId: string) {
+  const business = await getBusinessById(businessId);
+  if (!business) throw new BusinessNotFoundError();
+
+  return getOrRunWebsiteAnalysis(businessId, business.websiteUrl, {
+    force: true,
+  });
 }

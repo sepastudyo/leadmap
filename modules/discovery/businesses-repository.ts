@@ -1,7 +1,7 @@
 import "server-only";
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, getTableColumns, inArray, sql } from "drizzle-orm";
 
-import { businesses } from "@/db/schema";
+import { businesses, leadScores } from "@/db/schema";
 import type { LatLng } from "@/db/schema/columns";
 import { db, type DbClient } from "@/lib/db";
 
@@ -70,6 +70,14 @@ export async function upsertBusinesses(
  * .place_ids` is an *ordered* result list (architecture.md §5.2), and
  * SQL `IN` makes no ordering guarantee, so this reorders in JS after a
  * single batched `IN` query rather than issuing N queries.
+ *
+ * `leadScore` (Sprint 7 Phase 7.5, architecture.md §8 "score band"
+ * filter) is a `left join` to `lead_scores` — `null` for any business
+ * that hasn't been individually opened yet (Place Details/analysis/
+ * scoring are on-demand per business, never run in bulk during search,
+ * per §3/§7.3), same as `website_url` already was before this phase.
+ * `getTableColumns(businesses)` keeps every existing column exactly as
+ * it was; this only adds the one new field, not a parallel select.
  */
 export async function getBusinessesByPlaceIds(
   placeIds: string[],
@@ -78,8 +86,12 @@ export async function getBusinessesByPlaceIds(
   if (placeIds.length === 0) return [];
 
   const rows = await dbClient
-    .select()
+    .select({
+      ...getTableColumns(businesses),
+      leadScore: leadScores.total,
+    })
     .from(businesses)
+    .leftJoin(leadScores, eq(leadScores.businessId, businesses.id))
     .where(inArray(businesses.googlePlaceId, placeIds));
 
   const byPlaceId = new Map(rows.map((row) => [row.googlePlaceId, row]));

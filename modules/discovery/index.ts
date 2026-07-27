@@ -9,4 +9,5 @@ export * from "./lock";
 export * from "./normalize";
 export * from "./search";
 export * from "./search-cache-repository";
+export * from "./search-history-repository";
 export * from "./signature";

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { RecentSearchesCard } from "@/components/dashboard/recent-searches-card";
 import { auth } from "@/auth";
 import {
   countActiveFavoritesByUser,
@@ -10,24 +11,24 @@ import {
 /**
  * Dashboard — a pull-based landing page (architecture.md §3, §17
  * Sprint 4 Phase 4.5: replace the Sprint 1 placeholder cards with real
- * queries). "Saved leads" and "Follow-ups due" now read `favorites`
- * through `modules/crm`'s existing repository/orchestration layer —
- * the same "RSC reads directly, no API round-trip" pattern the
- * Business Detail Page and Leads page already use. Follow-ups due is
- * exactly architecture.md §20's "Reconciled inconsistency 2": a query
- * at render time, not a scheduler or notification.
+ * queries). "Saved leads" and "Follow-ups due" read `favorites` through
+ * `modules/crm`'s existing repository/orchestration layer — the same
+ * "RSC reads directly, no API round-trip" pattern the Business Detail
+ * Page and Leads page already use. Follow-ups due is exactly
+ * architecture.md §20's "Reconciled inconsistency 2": a query at render
+ * time, not a scheduler or notification.
  *
- * "Recent searches" is left as a placeholder — architecture.md §3
- * describes it as reading from "`search_cache` owned by the user," but
- * §5.1/§5.2 define `search_cache` as the GLOBAL shared cache plane with
- * no `user_id` column at all (confirmed against
- * `db/schema/search-cache.ts`). That's an inconsistency inside
- * architecture.md itself, not a Sprint 4 gap — implementing it would
- * require either a schema change (a new user-plane search-history
- * table, or adding ownership to the shared cache, which would break
- * Cache First's "one Google call, not two" dedup guarantee) that isn't
- * part of this phase's approved scope. Flagged for a decision rather
- * than silently worked around.
+ * "Recent searches" was left as a placeholder through Sprint 4 —
+ * architecture.md §3 describes it as reading from "`search_cache`
+ * owned by the user," but §5.1/§5.2 define `search_cache` as the
+ * GLOBAL shared cache plane with no `user_id` column at all. Resolved
+ * in Sprint 7 (Phases 7.1–7.4) via a separate USER-plane
+ * `search_history` table recording who searched what, when — leaving
+ * `search_cache` itself, and Cache First's dedup guarantee, untouched.
+ * Unlike its two siblings, `RecentSearchesCard` is a client component
+ * that fetches `GET /api/discovery/recent-searches` (Phase 7.3) rather
+ * than an RSC direct read — a deliberate choice for this feature, not a
+ * pattern change for the page as a whole.
  */
 export default async function DashboardPage() {
   const session = await auth();
@@ -51,13 +52,7 @@ export default async function DashboardPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <div className="border-border rounded-lg border border-dashed p-4">
-          <h2 className="text-sm font-medium">Recent searches</h2>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Search history isn&apos;t tracked per user yet — run a search from
-            Discovery.
-          </p>
-        </div>
+        <RecentSearchesCard />
 
         <div className="border-border rounded-lg border p-4">
           <h2 className="text-sm font-medium">Saved leads</h2>

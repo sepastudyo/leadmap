@@ -31,6 +31,7 @@ import {
   purgeExpiredSearchCache,
   upsertSearchCache,
 } from "./search-cache-repository";
+import { recordSearch } from "./search-history-repository";
 import { computeSearchSignature } from "./signature";
 
 /**
@@ -269,6 +270,15 @@ export async function searchBusinesses(
   const pageBusinesses = await getBusinessesByPlaceIds(pagePlaceIds);
 
   const hasMore = cursor + pageSize < placeIds.length || Boolean(nextPageToken);
+
+  // Recorded only now that the search has actually succeeded (cache hit,
+  // fresh Google call, or a "load more" page extension all reach this
+  // point alike) — never speculatively before. Upserts on
+  // `(user_id, search_cache_id)` (Phase 7.1), so a page-2 "load more"
+  // against the same search just bumps `searched_at` rather than adding
+  // a second entry; `search_cache` itself (Cache First's dedup) is
+  // untouched by this call.
+  await recordSearch(userId, cacheRow.id);
 
   return {
     businesses: pageBusinesses,

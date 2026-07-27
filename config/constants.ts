@@ -151,3 +151,25 @@ export const AI_ANTHROPIC_MODEL = "claude-3-5-haiku-latest";
  */
 export const AI_RATE_LIMIT_MAX = 10;
 export const AI_RATE_LIMIT_WINDOW_MS = 60_000;
+
+/**
+ * Sprint 7 Phase 7.3 — Dashboard's "Recent searches" card shows the
+ * user's last N distinct searches (`modules/discovery/
+ * search-history-repository.ts`'s `listRecentSearches`). Not specified
+ * in architecture.md; kept small since this is a landing-page glance,
+ * not a full history view, and tunable without a schema change.
+ */
+export const RECENT_SEARCHES_LIMIT = 5;
+
+/**
+ * Postgres-backed fixed-window rate limit for the manual force-refresh
+ * routes (Sprint 7 Phase 7.6; architecture.md §6.4 "an explicit,
+ * user-triggered invalidation that respects rate limits", §12.5 "Force-
+ * refresh Place Details (rate-limited)"). Tighter than
+ * `AI_RATE_LIMIT_MAX` — unlike an AI call or a search, a force-refresh
+ * *always* bypasses the cache by definition, so every request here is
+ * guaranteed to spend real Google-API/analysis-fetch quota, never a
+ * free cache hit.
+ */
+export const BUSINESS_REFRESH_RATE_LIMIT_MAX = 5;
+export const BUSINESS_REFRESH_RATE_LIMIT_WINDOW_MS = 60_000;
