@@ -135,7 +135,7 @@ export function FavoritePanel({
           disabled={isSaving}
           onClick={favorite ? handleUnsave : handleSave}
         >
-          {favorite ? "Saved — unsave" : "Save as lead"}
+          {isSaving ? "Saving…" : favorite ? "Saved — unsave" : "Save as lead"}
         </Button>
       </div>
 

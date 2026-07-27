@@ -81,6 +81,7 @@ export function NotesPanel({ businessId, initialNotes }: NotesPanelProps) {
   }
 
   async function patchNote(id: string, patch: Record<string, unknown>) {
+    setIsSubmitting(true);
     setError(null);
     try {
       const response = await fetch(`/api/notes/${id}`, {
@@ -102,6 +103,8 @@ export function NotesPanel({ businessId, initialNotes }: NotesPanelProps) {
       );
     } catch {
       setError("Network error — check your connection and try again.");
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -135,7 +138,7 @@ export function NotesPanel({ businessId, initialNotes }: NotesPanelProps) {
           disabled={isSubmitting || !draft.trim()}
           className="self-start"
         >
-          Add note
+          {isSubmitting ? "Adding…" : "Add note"}
         </Button>
       </form>
 
@@ -155,14 +158,16 @@ export function NotesPanel({ businessId, initialNotes }: NotesPanelProps) {
                 <div className="flex gap-3">
                   <button
                     type="button"
-                    className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-2"
+                    disabled={isSubmitting}
+                    className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-2 disabled:pointer-events-none disabled:opacity-50"
                     onClick={() => patchNote(note.id, { pinned: !note.pinned })}
                   >
                     {note.pinned ? "Unpin" : "Pin"}
                   </button>
                   <button
                     type="button"
-                    className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-2"
+                    disabled={isSubmitting}
+                    className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-2 disabled:pointer-events-none disabled:opacity-50"
                     onClick={() =>
                       editingId === note.id
                         ? setEditingId(null)
@@ -184,11 +189,11 @@ export function NotesPanel({ businessId, initialNotes }: NotesPanelProps) {
                   <Button
                     type="button"
                     size="sm"
-                    disabled={!editDraft.trim()}
+                    disabled={isSubmitting || !editDraft.trim()}
                     className="self-start"
                     onClick={() => saveEdit(note.id)}
                   >
-                    Save
+                    {isSubmitting ? "Saving…" : "Save"}
                   </Button>
                 </div>
               ) : (

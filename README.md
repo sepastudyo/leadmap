@@ -1,16 +1,28 @@
 # LeadMap
 
 AI-Powered Lead Intelligence Platform for digital marketing agencies. The
-system architecture, database design, and six-sprint plan are defined in
+system architecture and database design are defined in
 [`docs/architecture.md`](./docs/architecture.md) — the single source of
 truth for this project. Sprint progress is tracked in `docs/sprint-1.md`
-through `docs/sprint-6.md`.
+through `docs/sprint-8.md` (each with a matching `-completion.md` report
+from Sprint 5 onward); `docs/sprint-8.md` is the final sprint — v1.0.0.
 
-This repository currently contains **Sprint 1 — Foundation** (see
-[`docs/sprint-1.md`](./docs/sprint-1.md)): authentication, the user-plane
-database schema, encrypted API key storage, an authenticated dashboard
-shell, and CI/CD + error monitoring. Google integration, AI features, and
-the rest of the product's business logic land in Sprints 2–6.
+This repository is **feature-complete**: manual, staged business
+discovery (Google Places, cache-first); Website Analysis (SEO/CMS/
+tracking/social/schema/robots/sitemap/SSL) and an explainable Lead
+Score; a lightweight lead organizer (favorites, notes, status,
+follow-ups, CSV/XLSX export) with per-user recent-search history and
+additional Discovery filters; optional, bring-your-own-key AI Audit and
+Opportunity Reasoning (OpenAI/Gemini/Claude); manual force-refresh for
+Place Details and Website Analysis; encrypted-at-rest API keys;
+Postgres-backed rate limiting; a Content-Security-Policy and standard
+security headers; and CI/CD with gated, real-error-surfacing
+migrations. See `docs/sprint-6-completion.md` and
+`docs/sprint-7-completion.md` for what each later sprint added, and
+`docs/product-hardening-backlog.md` for what's intentionally deferred
+past v1.0 (performance/observability passes, a backup/restore drill,
+ADRs, and the commercial/legal checklist — all explicitly non-blocking
+for continued use, not silently dropped).
 
 ## Stack
 
@@ -26,8 +38,11 @@ Sentry.
 
 ## Prerequisites
 
-- Node.js 20+
-- A PostgreSQL database (Neon or Supabase free tier, per architecture.md §15)
+- Node.js 22.19+ (the app itself has no hard floor, but `undici` — a
+  direct dependency — declares `engines.node: >=22.19.0`; CI runs on
+  Node 22 for the same reason, see `.github/workflows/ci.yml`)
+- A PostgreSQL database with the PostGIS extension (Neon or Supabase
+  free tier, per architecture.md §15)
 
 ## Setup
 
@@ -76,9 +91,12 @@ Sentry.
 | `npm run db:migrate`   | Apply pending migrations                      |
 | `npm run db:studio`    | Open Drizzle Studio against `DATABASE_URL`    |
 
-`db/schema` currently defines the Sprint 1 user-plane baseline (`users`,
-`user_settings`, `rate_limits`, `audit_logs`); more tables land sprint by
-sprint per architecture.md §5.
+`db/schema` defines all 16 tables across both data planes (architecture.md
+§5.1): user plane (`users`, `user_settings`, `rate_limits`, `audit_logs`,
+`favorites`, `notes`, `ai_results`, `search_history`, `idempotency_keys`)
+and the shared, deduplicated cache plane (`businesses`, `search_cache`,
+`website_analyses`, `analysis_history`, `lead_scores`, `scoring_rules`,
+`scoring_rulesets`).
 
 ## Project structure
 
@@ -88,32 +106,35 @@ transport layer. See architecture.md §4 for the full rationale.
 ```
 leadmap/
 ├── app/            # Next.js App Router — routing + transport only
-│   ├── (auth)/               # sign-in / sign-up routes
-│   ├── (dashboard)/          # authenticated shell: dashboard + settings built;
-│   │                         # discovery/business/leads are Sprint 2-4 stubs
-│   └── api/                  # Route Handlers: Auth.js, /api/settings
+│   ├── (auth)/               # sign-in / sign-up
+│   ├── (dashboard)/          # authenticated shell: dashboard, discovery,
+│   │                         # business/[id], leads, settings
+│   └── api/                  # Route Handlers — Auth.js, discovery
+│                              # (search/maps-key/recent-searches), businesses
+│                              # (notes, ai/audit, ai/opportunity, details,
+│                              # analyze), favorites, notes, export, settings
 ├── modules/        # Domain logic — no Next.js/React imports
-│   ├── auth/ settings/       # built (Sprint 1)
-│   ├── google/ discovery/    # Sprint 2 stubs
-│   ├── intelligence/{analysis,scoring}/  # Sprint 3 stubs
-│   ├── crm/                  # Sprint 4 stub
-│   ├── ai/                   # Sprint 5 stub
-│   └── shared/                # built (Sprint 1)
+│   ├── auth/                 # session, account
+│   ├── google/                # Places/Details/Geocoding clients
+│   ├── discovery/            # search orchestration, dedup, search history
+│   ├── intelligence/{analysis,scoring}/  # Website Analysis pipeline + Lead Score
+│   ├── crm/                  # favorites, notes, status, follow-up, export
+│   ├── ai/                   # provider adapters, AI Audit, Opportunity Reasoning
+│   ├── settings/              # encrypted key storage
+│   └── shared/
 ├── lib/            # Cross-cutting infra
-│   ├── db/ crypto/ validation/ observability/  # built (Sprint 1)
-│   └── rate-limit/            # Sprint 2 stub (search rate limiting)
+│   ├── db/ crypto/ http/ idempotency/ observability/ validation/
+│   └── rate-limit/            # Postgres-backed limiter (search, AI, force-refresh, auth)
 ├── db/
-│   ├── schema/ migrations/ seed/
-├── components/     # UI primitives (shadcn/ui)
-├── config/         # env parsing/validation, constants, feature flags
+│   ├── schema/ migrations/ seed/  # 16 tables, see below
+├── components/     # UI: table, map, business/dashboard/discovery/leads panels
+├── config/         # env parsing/validation, constants
 ├── proxy.ts        # edge auth gate (Next.js 16's renamed `middleware.ts`)
+├── next.config.ts  # CSP + security headers, Sentry build integration
 ├── instrumentation.ts / instrumentation-client.ts  # Sentry init
-└── docs/           # architecture.md, sprint-1.md … sprint-6.md
+└── docs/           # architecture.md, sprint-1.md … sprint-8.md (+ completion
+                     # reports, project-health-review.md, product-hardening-backlog.md)
 ```
-
-Modules scoped for a later sprint still export nothing (`export {}`) —
-they exist to establish the folder structure ahead of the logic that
-will fill them in.
 
 ## Deployment
 

@@ -76,7 +76,7 @@ export function RefreshPanel({ businessId }: RefreshPanelProps) {
       >
         {isRefreshing ? "Refreshing…" : "Refresh"}
       </Button>
-      {error && <p className="text-destructive text-xs">{error}</p>}
+      {error && <p className="text-destructive text-sm">{error}</p>}
     </div>
   );
 }

@@ -178,7 +178,11 @@ export function LeadsView({
         onSortingChange={setSorting}
         isLoading={status === "loading"}
         error={status === "error" ? errorMessage : null}
-        emptyMessage="No saved leads yet — favorite a business from its detail page."
+        emptyMessage={
+          statusFilter
+            ? "No leads match this status filter."
+            : "No saved leads yet — favorite a business from its detail page."
+        }
       />
 
       <DataTablePagination
