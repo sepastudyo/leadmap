@@ -1,7 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
-import { auth } from "@/auth";
+import { jsonData, jsonError, requireSession } from "@/lib/http";
 import { getDecryptedKeys } from "@/modules/settings";
 
 /**
@@ -27,36 +26,20 @@ import { getDecryptedKeys } from "@/modules/settings";
  * Google Cloud Console, not secrecy on our side.
  */
 export async function GET() {
-  const requestId = randomUUID();
-  const session = await auth();
+  const session = await requireSession();
+  if (session instanceof NextResponse) return session;
+  const { userId, requestId } = session;
 
-  if (!session?.user?.id) {
-    return NextResponse.json(
-      {
-        error: { code: "UNAUTHORIZED", message: "Sign in required." },
-        request_id: requestId,
-      },
-      { status: 401 },
-    );
-  }
-
-  const settings = await getDecryptedKeys(session.user.id);
+  const settings = await getDecryptedKeys(userId);
 
   if (!settings) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "GOOGLE_API_KEY_MISSING",
-          message: "Save a Google API key in Settings before using the map.",
-        },
-        request_id: requestId,
-      },
-      { status: 422 },
+    return jsonError(
+      "GOOGLE_API_KEY_MISSING",
+      "Save a Google API key in Settings before using the map.",
+      requestId,
+      422,
     );
   }
 
-  return NextResponse.json({
-    data: { googleApiKey: settings.googleApiKey },
-    request_id: requestId,
-  });
+  return jsonData({ googleApiKey: settings.googleApiKey }, requestId);
 }

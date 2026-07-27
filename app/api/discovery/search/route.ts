@@ -1,12 +1,11 @@
-import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
-import { auth } from "@/auth";
 import {
   IDEMPOTENCY_KEY_TTL_HOURS,
   SEARCH_RATE_LIMIT_MAX,
   SEARCH_RATE_LIMIT_WINDOW_MS,
 } from "@/config/constants";
+import { jsonData, jsonError, requireSession } from "@/lib/http";
 import {
   hashRequestBody,
   lookupIdempotencyKey,
@@ -40,33 +39,22 @@ const IDEMPOTENCY_BUCKET = "discovery.search";
  * specific call*). See docs/sprint-2.md for the fuller writeup.
  */
 export async function POST(request: Request) {
-  const requestId = randomUUID();
-  const session = await auth();
-
-  if (!session?.user?.id) {
-    return NextResponse.json(
-      {
-        error: { code: "UNAUTHORIZED", message: "Sign in required." },
-        request_id: requestId,
-      },
-      { status: 401 },
-    );
-  }
+  const session = await requireSession();
+  if (session instanceof NextResponse) return session;
+  const { userId, requestId } = session;
 
   const body = await request.json().catch(() => null);
   const parsed = searchRequestSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json(
+    return jsonError(
+      "VALIDATION_ERROR",
+      "Invalid search input.",
+      requestId,
+      422,
       {
-        error: {
-          code: "VALIDATION_ERROR",
-          message: "Invalid search input.",
-          details: parsed.error.issues,
-        },
-        request_id: requestId,
+        details: parsed.error.issues,
       },
-      { status: 422 },
     );
   }
 
@@ -78,15 +66,11 @@ export async function POST(request: Request) {
   if (idempotencyKeyHeader !== null) {
     const parsedKey = idempotencyKeySchema.safeParse(idempotencyKeyHeader);
     if (!parsedKey.success) {
-      return NextResponse.json(
-        {
-          error: {
-            code: "VALIDATION_ERROR",
-            message: "Invalid Idempotency-Key header.",
-          },
-          request_id: requestId,
-        },
-        { status: 422 },
+      return jsonError(
+        "VALIDATION_ERROR",
+        "Invalid Idempotency-Key header.",
+        requestId,
+        422,
       );
     }
     idempotencyKey = parsedKey.data;
@@ -96,15 +80,17 @@ export async function POST(request: Request) {
 
   if (idempotencyKey) {
     const lookup = await lookupIdempotencyKey(
-      session.user.id,
+      userId,
       IDEMPOTENCY_BUCKET,
       idempotencyKey,
       requestHash,
     );
 
     if (lookup.outcome === "hit") {
-      // §12.4 "the first result is ... replayed on retry" — no rate
-      // limit charge, no Google/DB work: this is not a new action.
+      // §12.4 "the first result is ... replayed on retry" — the stored
+      // body is a *complete*, previously-built envelope replayed
+      // verbatim, not a fresh one, so this bypasses `jsonData`/
+      // `jsonError` deliberately rather than re-wrapping it.
       return NextResponse.json(lookup.response.body, {
         status: lookup.response.status,
         headers: { "Idempotency-Replayed": "true" },
@@ -112,16 +98,11 @@ export async function POST(request: Request) {
     }
 
     if (lookup.outcome === "conflict") {
-      return NextResponse.json(
-        {
-          error: {
-            code: "IDEMPOTENCY_KEY_CONFLICT",
-            message:
-              "This Idempotency-Key was already used with a different request.",
-          },
-          request_id: requestId,
-        },
-        { status: 409 },
+      return jsonError(
+        "IDEMPOTENCY_KEY_CONFLICT",
+        "This Idempotency-Key was already used with a different request.",
+        requestId,
+        409,
       );
     }
   }
@@ -129,7 +110,7 @@ export async function POST(request: Request) {
   // architecture.md §12.4 "Tighter buckets on expensive actions
   // (search, analyze, AI)" — only charged for genuinely new work; an
   // idempotent replay above never reaches here.
-  const rateLimit = await checkRateLimit(session.user.id, IDEMPOTENCY_BUCKET, {
+  const rateLimit = await checkRateLimit(userId, IDEMPOTENCY_BUCKET, {
     limit: SEARCH_RATE_LIMIT_MAX,
     windowMs: SEARCH_RATE_LIMIT_WINDOW_MS,
   });
@@ -146,16 +127,12 @@ export async function POST(request: Request) {
       Math.ceil((rateLimit.resetAt.getTime() - Date.now()) / 1000),
     );
 
-    return NextResponse.json(
+    return jsonError(
+      "RATE_LIMITED",
+      "Too many searches — try again shortly.",
+      requestId,
+      429,
       {
-        error: {
-          code: "RATE_LIMITED",
-          message: "Too many searches — try again shortly.",
-        },
-        request_id: requestId,
-      },
-      {
-        status: 429,
         headers: {
           ...rateLimitHeaders,
           "Retry-After": String(retryAfterSeconds),
@@ -167,57 +144,57 @@ export async function POST(request: Request) {
   const { cursor, pageSize, ...input } = parsed.data;
 
   try {
-    const result = await searchBusinesses(session.user.id, input, {
+    const result = await searchBusinesses(userId, input, {
       cursor,
       pageSize,
     });
 
-    const responseBody = {
-      data: result.businesses,
-      meta: {
-        next_cursor: result.nextCursor,
-        from_cache: result.fromCache,
-        total_cached: result.totalCached,
-      },
-      request_id: requestId,
+    const meta = {
+      next_cursor: result.nextCursor,
+      from_cache: result.fromCache,
+      total_cached: result.totalCached,
     };
 
     if (idempotencyKey) {
       // Only successful responses are memoized — a failed attempt
-      // (below) must stay freely retryable under the same key.
+      // (below) must stay freely retryable under the same key. Stored
+      // verbatim as the envelope shape `jsonData` would itself produce,
+      // so a later replay above can return it unchanged.
       await storeIdempotentResponse(
-        session.user.id,
+        userId,
         IDEMPOTENCY_BUCKET,
         idempotencyKey,
         requestHash,
-        { status: 200, body: responseBody },
+        {
+          status: 200,
+          body: { data: result.businesses, meta, request_id: requestId },
+        },
         IDEMPOTENCY_KEY_TTL_HOURS,
       );
     }
 
-    return NextResponse.json(responseBody, { headers: rateLimitHeaders });
+    return jsonData(result.businesses, requestId, {
+      meta,
+      headers: rateLimitHeaders,
+    });
   } catch (error) {
     if (error instanceof GoogleApiKeyMissingError) {
-      return NextResponse.json(
-        {
-          error: { code: "GOOGLE_API_KEY_MISSING", message: error.message },
-          request_id: requestId,
-        },
-        { status: 422, headers: rateLimitHeaders },
+      return jsonError(
+        "GOOGLE_API_KEY_MISSING",
+        error.message,
+        requestId,
+        422,
+        { headers: rateLimitHeaders },
       );
     }
 
     if (error instanceof GoogleApiError) {
-      return NextResponse.json(
-        {
-          error: {
-            code: "GOOGLE_API_ERROR",
-            message:
-              "The search provider returned an error. Try again shortly.",
-          },
-          request_id: requestId,
-        },
-        { status: 502, headers: rateLimitHeaders },
+      return jsonError(
+        "GOOGLE_API_ERROR",
+        "The search provider returned an error. Try again shortly.",
+        requestId,
+        502,
+        { headers: rateLimitHeaders },
       );
     }
 

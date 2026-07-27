@@ -6,6 +6,7 @@
  */
 export * from "./analysis";
 export * from "./auth";
+export * from "./crm";
 export * from "./discovery";
 export * from "./idempotency";
 export * from "./scoring";

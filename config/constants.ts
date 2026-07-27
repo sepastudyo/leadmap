@@ -99,3 +99,14 @@ export const ANALYZER_VERSION = "1.0.0";
  * (our data)" — the midpoint of that range; our own derived data, so a
  * longer TTL is fine, tunable without a schema change. */
 export const WEBSITE_ANALYSIS_TTL_DAYS = 60;
+
+/**
+ * `/api/export` (architecture.md §12.5 "Stream CSV/XLSX of selected
+ * leads", Sprint 4 Phase 4.6: "Keep exports bounded"). No exact number
+ * is specified in architecture.md; the Leads page's row selection is
+ * already implicitly capped at one page (20, resets on page change —
+ * Phase 4.4), so this is a generous ceiling that only matters as
+ * defense-in-depth against a manually-crafted request, not a limit the
+ * UI is expected to hit.
+ */
+export const EXPORT_MAX_ROWS = 500;

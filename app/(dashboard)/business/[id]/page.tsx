@@ -1,9 +1,17 @@
 import { notFound, redirect } from "next/navigation";
 
 import { AnalysisSummary } from "@/components/business/analysis-summary";
+import type { FavoriteDto } from "@/components/business/favorite-panel";
+import { FavoritePanel } from "@/components/business/favorite-panel";
 import { GoogleSignals } from "@/components/business/google-signals";
 import { LeadScoreCard } from "@/components/business/lead-score-card";
+import type { NoteDto } from "@/components/business/notes-panel";
+import { NotesPanel } from "@/components/business/notes-panel";
 import { auth } from "@/auth";
+import {
+  getFavoriteByUserAndBusiness,
+  getNotesForBusiness,
+} from "@/modules/crm";
 import { getBusinessById } from "@/modules/discovery";
 import {
   BusinessNotFoundError,
@@ -53,6 +61,28 @@ export default async function BusinessDetailPage({
   const analysis = await getOrRunWebsiteAnalysis(id, current.websiteUrl);
   const score = await getOrComputeLeadScore(id, current, analysis);
 
+  // Sprint 4 Phase 4.3 (architecture.md §3 Lead Organization): reads go
+  // straight through the Phase 4.1 repository/orchestration layer, the
+  // same "RSC reads directly, no API round-trip" pattern the rest of
+  // this page already uses — only the client-side mutations (favorite
+  // toggle, status/priority/follow-up, notes) go through the Phase 4.2
+  // API, since those need interactivity a Server Component can't do.
+  const favoriteRow = await getFavoriteByUserAndBusiness(session.user.id, id);
+  const favorite: FavoriteDto | null = favoriteRow && {
+    id: favoriteRow.id,
+    status: favoriteRow.status,
+    priority: favoriteRow.priority,
+    followUpAt: favoriteRow.followUpAt,
+  };
+
+  const noteRows = await getNotesForBusiness(session.user.id, id);
+  const notes: NoteDto[] = noteRows.map((note) => ({
+    id: note.id,
+    body: note.body,
+    pinned: note.pinned,
+    createdAt: note.createdAt.toISOString(),
+  }));
+
   const location = [current.district, current.city, current.country]
     .filter((part): part is string => Boolean(part))
     .join(", ");
@@ -88,6 +118,8 @@ export default async function BusinessDetailPage({
         </p>
       )}
 
+      <FavoritePanel businessId={id} initialFavorite={favorite} />
+
       <div className="grid gap-4 lg:grid-cols-3">
         <LeadScoreCard score={score} />
         <GoogleSignals business={current} />
@@ -97,6 +129,8 @@ export default async function BusinessDetailPage({
         analysis={analysis}
         hasWebsite={current.websiteUrl !== null}
       />
+
+      <NotesPanel businessId={id} initialNotes={notes} />
     </div>
   );
 }

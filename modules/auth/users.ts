@@ -1,8 +1,8 @@
 import "server-only";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { users } from "@/db/schema";
-import { db } from "@/lib/db";
+import { db, notDeleted } from "@/lib/db";
 import { EmailAlreadyExistsError } from "@/modules/shared";
 
 /**
@@ -13,11 +13,9 @@ import { EmailAlreadyExistsError } from "@/modules/shared";
  * directly (architecture.md §4 "modules/auth — session, account,
  * RBAC-ready policies").
  *
- * Soft-deleted users (`deleted_at IS NOT NULL`) are excluded here per
- * architecture.md §5.5 ("filtered centrally in lib/db") — this is the
- * only user-plane query in the codebase so far; a shared helper is
- * worth introducing once more of these accumulate (favorites/notes,
- * Sprint 4).
+ * Soft-deleted users are excluded via `lib/db`'s central `notDeleted()`
+ * helper (architecture.md §5.5 "filtered centrally in lib/db") — the
+ * same helper Sprint 4's `favorites`/`notes` repositories use.
  */
 
 export type NewUser = {
@@ -31,7 +29,7 @@ export async function findUserByEmail(email: string) {
   const [user] = await db
     .select()
     .from(users)
-    .where(and(eq(users.email, email), isNull(users.deletedAt)))
+    .where(and(eq(users.email, email), notDeleted(users.deletedAt)))
     .limit(1);
 
   return user;

@@ -1,7 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
-import { auth } from "@/auth";
+import { jsonData, jsonError, requireSession } from "@/lib/http";
 import { updateSettingsSchema } from "@/lib/validation";
 import {
   AiApiKeyRequiredError,
@@ -24,71 +23,43 @@ function requestIp(request: Request): string {
 }
 
 export async function GET() {
-  const requestId = randomUUID();
-  const session = await auth();
+  const session = await requireSession();
+  if (session instanceof NextResponse) return session;
+  const { userId, requestId } = session;
 
-  if (!session?.user?.id) {
-    return NextResponse.json(
-      {
-        error: { code: "UNAUTHORIZED", message: "Sign in required." },
-        request_id: requestId,
-      },
-      { status: 401 },
-    );
-  }
-
-  const data = await getMaskedSettings(session.user.id);
-  return NextResponse.json({ data, request_id: requestId });
+  const data = await getMaskedSettings(userId);
+  return jsonData(data, requestId);
 }
 
 export async function PATCH(request: Request) {
-  const requestId = randomUUID();
-  const session = await auth();
-
-  if (!session?.user?.id) {
-    return NextResponse.json(
-      {
-        error: { code: "UNAUTHORIZED", message: "Sign in required." },
-        request_id: requestId,
-      },
-      { status: 401 },
-    );
-  }
+  const session = await requireSession();
+  if (session instanceof NextResponse) return session;
+  const { userId, requestId } = session;
 
   const body = await request.json().catch(() => null);
   const parsed = updateSettingsSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "VALIDATION_ERROR",
-          message: "Invalid settings input.",
-          details: parsed.error.issues,
-        },
-        request_id: requestId,
-      },
-      { status: 422 },
+    return jsonError(
+      "VALIDATION_ERROR",
+      "Invalid settings input.",
+      requestId,
+      422,
+      { details: parsed.error.issues },
     );
   }
 
   try {
-    const data = await saveSettings(session.user.id, parsed.data, {
+    const data = await saveSettings(userId, parsed.data, {
       ip: requestIp(request),
     });
-    return NextResponse.json({ data, request_id: requestId });
+    return jsonData(data, requestId);
   } catch (error) {
     if (
       error instanceof GoogleApiKeyRequiredError ||
       error instanceof AiApiKeyRequiredError
     ) {
-      return NextResponse.json(
-        {
-          error: { code: "VALIDATION_ERROR", message: error.message },
-          request_id: requestId,
-        },
-        { status: 422 },
-      );
+      return jsonError("VALIDATION_ERROR", error.message, requestId, 422);
     }
     throw error;
   }

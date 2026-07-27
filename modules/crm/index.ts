@@ -1,7 +1,10 @@
 /**
  * Lead Organization (Lightweight CRM): favorites, notes, status,
- * follow-up date, export (architecture.md §3, §17 Sprint 4).
- *
- * Not implemented yet — scoped for Sprint 4 (Lead Organization).
+ * priority, follow-up date, and export (architecture.md §3, §17
+ * Sprint 4 — all phases complete).
  */
-export {};
+export * from "./errors";
+export * from "./favorites";
+export * from "./favorites-repository";
+export * from "./notes";
+export * from "./notes-repository";

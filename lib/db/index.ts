@@ -1,5 +1,7 @@
 import "server-only";
+import { isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
+import type { PgColumn } from "drizzle-orm/pg-core";
 import postgres from "postgres";
 
 import { env } from "@/config/env";
@@ -25,3 +27,14 @@ export const db = drizzle(client, { schema });
  */
 export type DbClient =
   typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Central `deleted_at IS NULL` predicate (architecture.md §5.5
+ * "filtered centrally in lib/db") — every soft-delete-aware query
+ * composes this into its `where` (via `and(...)`) instead of writing
+ * `isNull(table.deletedAt)` inline at each call site. Health review
+ * finding #10.
+ */
+export function notDeleted(deletedAtColumn: PgColumn) {
+  return isNull(deletedAtColumn);
+}

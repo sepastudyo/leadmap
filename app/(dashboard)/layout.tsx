@@ -35,6 +35,12 @@ export default async function DashboardLayout({
             Discovery
           </Link>
           <Link
+            href="/leads"
+            className="text-muted-foreground hover:text-foreground text-sm"
+          >
+            Leads
+          </Link>
+          <Link
             href="/settings"
             className="text-muted-foreground hover:text-foreground text-sm"
           >

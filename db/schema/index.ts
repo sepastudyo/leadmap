@@ -7,8 +7,9 @@
  * added outside the original §5.2 dictionary; see the comment in
  * `idempotency-keys.ts` for why), the Sprint 3 Phase 3.5 Lead Score
  * engine tables (`scoring_rules`, `scoring_rulesets`, `lead_scores`),
- * and the Sprint 3 finalization's Website Analyzer persistence tables
- * (`website_analyses`, `analysis_history`).
+ * the Sprint 3 finalization's Website Analyzer persistence tables
+ * (`website_analyses`, `analysis_history`), and the Sprint 4 Phase 4.1
+ * user-plane Lead Organization tables (`favorites`, `notes`).
  */
 export * from "./columns";
 export * from "./users";
@@ -23,3 +24,5 @@ export * from "./scoring-rulesets";
 export * from "./lead-scores";
 export * from "./website-analyses";
 export * from "./analysis-history";
+export * from "./favorites";
+export * from "./notes";
