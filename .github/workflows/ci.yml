@@ -66,7 +66,51 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Apply migrations (gate)
-        run: npm run db:migrate
+        # `drizzle-kit migrate` itself is not used here: its CLI wraps
+        # every migration in `hanji`'s `renderWithTask`, which on
+        # failure calls `process.exit(1)` from inside its own catch
+        # block before the error ever reaches the CLI's outer
+        # `console.error` — the migration view's `render()` also
+        # ignores the error object it's given, so the only output on
+        # failure is the same "applying migrations..." spinner text
+        # seen in a failed run, then exit code 1, with the real
+        # Postgres error never printed anywhere. This calls the same
+        # `drizzle-orm/postgres-js/migrator` primitive drizzle-kit's
+        # CLI uses internally, directly, with a plain try/catch so the
+        # real error (query, params, and cause — e.g. syntax errors,
+        # constraint violations, connection failures) is always logged.
+        run: |
+          cat > /tmp/leadmap-ci-migrate.cjs <<'NODE_SCRIPT'
+          const postgres = require("postgres");
+          const { drizzle } = require("drizzle-orm/postgres-js");
+          const { migrate } = require("drizzle-orm/postgres-js/migrator");
+
+          async function main() {
+            const client = postgres(process.env.DATABASE_URL, { max: 1 });
+            const transparent = (value) => value;
+            for (const oid of ["1184", "1082", "1083", "1114"]) {
+              client.options.parsers[oid] = transparent;
+              client.options.serializers[oid] = transparent;
+            }
+            client.options.serializers["114"] = transparent;
+            client.options.serializers["3802"] = transparent;
+
+            const db = drizzle(client);
+            try {
+              await migrate(db, { migrationsFolder: "./db/migrations" });
+              console.log("Migrations applied successfully.");
+            } finally {
+              await client.end({ timeout: 1 });
+            }
+          }
+
+          main().catch((err) => {
+            console.error("Migration failed:");
+            console.error(err);
+            process.exitCode = 1;
+          });
+          NODE_SCRIPT
+          node /tmp/leadmap-ci-migrate.cjs
 
       - name: Build
         run: npm run build
@@ -111,7 +155,44 @@ jobs:
       - run: npm ci
 
       - name: Apply forward-only migrations to production
+        # Same rationale as the `verify` job's "Apply migrations (gate)"
+        # step: bypasses drizzle-kit CLI's error-swallowing bug in
+        # `hanji`'s `renderWithTask`/`MigrateProgress.render()` by
+        # calling the same underlying `drizzle-orm/postgres-js/migrator`
+        # primitive directly, with a plain try/catch that always prints
+        # the real error.
         if: env.PRODUCTION_DATABASE_URL != ''
-        run: npm run db:migrate
+        run: |
+          cat > /tmp/leadmap-ci-migrate.cjs <<'NODE_SCRIPT'
+          const postgres = require("postgres");
+          const { drizzle } = require("drizzle-orm/postgres-js");
+          const { migrate } = require("drizzle-orm/postgres-js/migrator");
+
+          async function main() {
+            const client = postgres(process.env.DATABASE_URL, { max: 1 });
+            const transparent = (value) => value;
+            for (const oid of ["1184", "1082", "1083", "1114"]) {
+              client.options.parsers[oid] = transparent;
+              client.options.serializers[oid] = transparent;
+            }
+            client.options.serializers["114"] = transparent;
+            client.options.serializers["3802"] = transparent;
+
+            const db = drizzle(client);
+            try {
+              await migrate(db, { migrationsFolder: "./db/migrations" });
+              console.log("Migrations applied successfully.");
+            } finally {
+              await client.end({ timeout: 1 });
+            }
+          }
+
+          main().catch((err) => {
+            console.error("Migration failed:");
+            console.error(err);
+            process.exitCode = 1;
+          });
+          NODE_SCRIPT
+          node /tmp/leadmap-ci-migrate.cjs
         env:
           DATABASE_URL: ${{ env.PRODUCTION_DATABASE_URL }}
