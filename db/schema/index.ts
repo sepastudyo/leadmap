@@ -8,8 +8,9 @@
  * `idempotency-keys.ts` for why), the Sprint 3 Phase 3.5 Lead Score
  * engine tables (`scoring_rules`, `scoring_rulesets`, `lead_scores`),
  * the Sprint 3 finalization's Website Analyzer persistence tables
- * (`website_analyses`, `analysis_history`), and the Sprint 4 Phase 4.1
- * user-plane Lead Organization tables (`favorites`, `notes`).
+ * (`website_analyses`, `analysis_history`), the Sprint 4 Phase 4.1
+ * user-plane Lead Organization tables (`favorites`, `notes`), and the
+ * Sprint 5 Phase 5.1 AI result cache (`ai_results`).
  */
 export * from "./columns";
 export * from "./users";
@@ -26,3 +27,4 @@ export * from "./website-analyses";
 export * from "./analysis-history";
 export * from "./favorites";
 export * from "./notes";
+export * from "./ai-results";

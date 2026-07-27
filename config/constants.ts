@@ -110,3 +110,31 @@ export const WEBSITE_ANALYSIS_TTL_DAYS = 60;
  * UI is expected to hit.
  */
 export const EXPORT_MAX_ROWS = 500;
+
+/**
+ * AI Layer (architecture.md §11.3 "timeouts and a single retry with
+ * backoff on transient errors"; §18 "Serverless function time budget
+ * is the tightest real constraint"). No exact numbers are specified in
+ * architecture.md — these are conservative starting points, tunable
+ * without a schema change.
+ */
+export const AI_REQUEST_TIMEOUT_MS = 25_000;
+/** §11.3 "an invalid response triggers one repair retry". */
+export const AI_STRUCTURED_OUTPUT_MAX_REPAIR_ATTEMPTS = 1;
+/** §11.3 "a single retry with backoff on transient errors" — passed as
+ * the AI SDK's own `maxRetries` so transport-level failures (network,
+ * 5xx) get this many retries in addition to (not instead of) the
+ * repair retry above, which is about invalid *content*, not transport
+ * failure. */
+export const AI_TRANSIENT_ERROR_MAX_RETRIES = 1;
+
+/**
+ * Default model per provider (architecture.md §11.1 "Supported:
+ * OpenAI, Gemini, Claude"). Not specified in architecture.md — small,
+ * inexpensive, current-generation models chosen since AI Audit/
+ * Opportunity Reasoning are single-shot structured-output calls, not
+ * open-ended chat; tunable without a schema change.
+ */
+export const AI_OPENAI_MODEL = "gpt-4o-mini";
+export const AI_GEMINI_MODEL = "gemini-2.0-flash";
+export const AI_ANTHROPIC_MODEL = "claude-3-5-haiku-latest";

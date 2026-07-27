@@ -5,6 +5,11 @@ import { auditLogs, userSettings } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import type { UpdateSettingsInput } from "@/lib/validation";
+// Direct file import, not the `@/modules/ai` barrel — see
+// `modules/ai/validate-key.ts`'s own comment: that barrel re-exports
+// `audit.ts`/`opportunity.ts`, which import `getDecryptedKeys` from
+// this file, so importing the barrel here would be circular.
+import { validateAiProviderKey } from "@/modules/ai/validate-key";
 
 /**
  * `user_settings` read/write (architecture.md §5.2, §7.2, §11.1, §13.4).
@@ -85,6 +90,23 @@ export class AiApiKeyRequiredError extends Error {
   }
 }
 
+/**
+ * architecture.md §3 Settings: "Keys are validated on save". Message
+ * is deliberately generic — same "never expose a provider-specific
+ * error" discipline architecture.md §11 requires for AI Audit/
+ * Opportunity Reasoning, extended here since the underlying check is
+ * the same `generateStructured` call and could otherwise leak
+ * provider-specific error detail.
+ */
+export class AiApiKeyInvalidError extends Error {
+  constructor() {
+    super(
+      "That AI API key couldn't be validated — check the key and provider, then try again.",
+    );
+    this.name = "AiApiKeyInvalidError";
+  }
+}
+
 export async function saveSettings(
   userId: string,
   input: UpdateSettingsInput,
@@ -117,6 +139,12 @@ export async function saveSettings(
     aiApiKeyEnc = null;
     if (existing?.aiApiKeyEnc) changedFields.push("ai_api_key");
   } else if (input.aiApiKey !== "") {
+    const validation = await validateAiProviderKey(
+      nextAiProvider,
+      input.aiApiKey,
+    );
+    if (!validation.ok) throw new AiApiKeyInvalidError();
+
     aiApiKeyEnc = encrypt(input.aiApiKey);
     changedFields.push("ai_api_key");
   } else if (providerChanged) {

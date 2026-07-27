@@ -14,6 +14,8 @@ const errorMessages: Record<string, string> = {
   GoogleApiKeyRequired:
     "A Google API key is required the first time you save settings.",
   AiApiKeyRequired: "Enter an AI API key for the newly selected provider.",
+  AiApiKeyInvalid:
+    "That AI API key couldn't be validated — check the key and provider, then try again.",
 };
 
 const AI_PROVIDERS = [

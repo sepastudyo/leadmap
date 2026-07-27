@@ -1,5 +1,7 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
+import { AiAuditPanel } from "@/components/business/ai-audit-panel";
 import { AnalysisSummary } from "@/components/business/analysis-summary";
 import type { FavoriteDto } from "@/components/business/favorite-panel";
 import { FavoritePanel } from "@/components/business/favorite-panel";
@@ -7,6 +9,7 @@ import { GoogleSignals } from "@/components/business/google-signals";
 import { LeadScoreCard } from "@/components/business/lead-score-card";
 import type { NoteDto } from "@/components/business/notes-panel";
 import { NotesPanel } from "@/components/business/notes-panel";
+import { OpportunityPanel } from "@/components/business/opportunity-panel";
 import { auth } from "@/auth";
 import {
   getFavoriteByUserAndBusiness,
@@ -20,6 +23,7 @@ import {
   getOrRefreshPlaceDetails,
   getOrRunWebsiteAnalysis,
 } from "@/modules/intelligence";
+import { getMaskedSettings } from "@/modules/settings";
 
 /**
  * `/business/[id]` (architecture.md §4 "(dashboard)/business/[id]/",
@@ -83,6 +87,15 @@ export default async function BusinessDetailPage({
     createdAt: note.createdAt.toISOString(),
   }));
 
+  // Sprint 5 Phase 5.5 (architecture.md §11 "AI features appear only
+  // when the user has stored a valid provider key"). A masked settings
+  // read (already existing, no new provider call) — not the same as
+  // Phase 5.2/5.3's `AiKeyMissingError` fallback inside each panel,
+  // which stays as defense-in-depth for a key removed after this page
+  // already rendered.
+  const settings = await getMaskedSettings(session.user.id);
+  const hasAiKey = settings.aiProvider !== null && settings.hasAiApiKey;
+
   const location = [current.district, current.city, current.country]
     .filter((part): part is string => Boolean(part))
     .join(", ");
@@ -129,6 +142,24 @@ export default async function BusinessDetailPage({
         analysis={analysis}
         hasWebsite={current.websiteUrl !== null}
       />
+
+      {hasAiKey ? (
+        <>
+          <AiAuditPanel businessId={id} />
+          <OpportunityPanel businessId={id} />
+        </>
+      ) : (
+        <p className="border-border bg-muted/40 rounded-lg border border-dashed p-3 text-sm">
+          Save an AI provider API key in{" "}
+          <Link
+            href="/settings"
+            className="text-primary underline underline-offset-4"
+          >
+            Settings
+          </Link>{" "}
+          to unlock AI Audit and Opportunity Reasoning.
+        </p>
+      )}
 
       <NotesPanel businessId={id} initialNotes={notes} />
     </div>

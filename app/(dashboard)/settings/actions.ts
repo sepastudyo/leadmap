@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { updateSettingsSchema } from "@/lib/validation";
 import {
+  AiApiKeyInvalidError,
   AiApiKeyRequiredError,
   GoogleApiKeyRequiredError,
   saveSettings,
@@ -43,6 +44,9 @@ export async function updateSettings(formData: FormData) {
     }
     if (error instanceof AiApiKeyRequiredError) {
       redirect("/settings?error=AiApiKeyRequired");
+    }
+    if (error instanceof AiApiKeyInvalidError) {
+      redirect("/settings?error=AiApiKeyInvalid");
     }
     throw error;
   }
