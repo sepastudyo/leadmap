@@ -80,7 +80,7 @@ jobs:
         # real error (query, params, and cause — e.g. syntax errors,
         # constraint violations, connection failures) is always logged.
         run: |
-          cat > /tmp/leadmap-ci-migrate.cjs <<'NODE_SCRIPT'
+          cat > ./.ci-migrate.cjs <<'NODE_SCRIPT'
           const postgres = require("postgres");
           const { drizzle } = require("drizzle-orm/postgres-js");
           const { migrate } = require("drizzle-orm/postgres-js/migrator");
@@ -110,7 +110,8 @@ jobs:
             process.exitCode = 1;
           });
           NODE_SCRIPT
-          node /tmp/leadmap-ci-migrate.cjs
+          node ./.ci-migrate.cjs
+          rm -f ./.ci-migrate.cjs
 
       - name: Build
         run: npm run build
@@ -163,7 +164,7 @@ jobs:
         # the real error.
         if: env.PRODUCTION_DATABASE_URL != ''
         run: |
-          cat > /tmp/leadmap-ci-migrate.cjs <<'NODE_SCRIPT'
+          cat > ./.ci-migrate.cjs <<'NODE_SCRIPT'
           const postgres = require("postgres");
           const { drizzle } = require("drizzle-orm/postgres-js");
           const { migrate } = require("drizzle-orm/postgres-js/migrator");
@@ -193,6 +194,7 @@ jobs:
             process.exitCode = 1;
           });
           NODE_SCRIPT
-          node /tmp/leadmap-ci-migrate.cjs
+          node ./.ci-migrate.cjs
+          rm -f ./.ci-migrate.cjs
         env:
           DATABASE_URL: ${{ env.PRODUCTION_DATABASE_URL }}
