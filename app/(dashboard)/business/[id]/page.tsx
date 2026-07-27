@@ -3,9 +3,9 @@ import { notFound, redirect } from "next/navigation";
 
 import { AiAuditPanel } from "@/components/business/ai-audit-panel";
 import { AnalysisSummary } from "@/components/business/analysis-summary";
+import { BusinessSignals } from "@/components/business/business-signals";
 import type { FavoriteDto } from "@/components/business/favorite-panel";
 import { FavoritePanel } from "@/components/business/favorite-panel";
-import { GoogleSignals } from "@/components/business/google-signals";
 import { LeadScoreCard } from "@/components/business/lead-score-card";
 import type { NoteDto } from "@/components/business/notes-panel";
 import { NotesPanel } from "@/components/business/notes-panel";
@@ -19,7 +19,6 @@ import {
 import { getBusinessById } from "@/modules/discovery";
 import {
   BusinessNotFoundError,
-  GoogleApiKeyMissingError,
   getOrComputeLeadScore,
   getOrRefreshPlaceDetails,
   getOrRunWebsiteAnalysis,
@@ -29,7 +28,9 @@ import { getMaskedSettings } from "@/modules/settings";
 /**
  * `/business/[id]` (architecture.md §4 "(dashboard)/business/[id]/",
  * §17 Sprint 3: "business detail page: analysis results, explainable
- * Lead Score, Google Business signals"). This *is* "opening a
+ * Lead Score, business signals" — originally "Google Business signals";
+ * renamed after the OpenStreetMap migration since the data no longer
+ * comes from Google). This *is* "opening a
  * business" (§3) — the on-demand trigger every read-through
  * orchestration function in `modules/intelligence` (Place Details,
  * Website Analysis, Lead Score) was built to be called from but
@@ -52,13 +53,10 @@ export default async function BusinessDetailPage({
   if (!business) notFound();
 
   let current = business;
-  let googleApiKeyMissing = false;
   try {
-    current = await getOrRefreshPlaceDetails(session.user.id, id);
+    current = await getOrRefreshPlaceDetails(id);
   } catch (error) {
-    if (error instanceof GoogleApiKeyMissingError) {
-      googleApiKeyMissing = true;
-    } else if (!(error instanceof BusinessNotFoundError)) {
+    if (!(error instanceof BusinessNotFoundError)) {
       throw error;
     }
   }
@@ -129,18 +127,11 @@ export default async function BusinessDetailPage({
         <RefreshPanel businessId={id} />
       </div>
 
-      {googleApiKeyMissing && (
-        <p className="border-border bg-muted/40 rounded-lg border border-dashed p-3 text-sm">
-          Save a Google API key in Settings to refresh phone/website/hours for
-          this business.
-        </p>
-      )}
-
       <FavoritePanel businessId={id} initialFavorite={favorite} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <LeadScoreCard score={score} />
-        <GoogleSignals business={current} />
+        <BusinessSignals business={current} />
       </div>
 
       <AnalysisSummary

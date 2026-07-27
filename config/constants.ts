@@ -9,9 +9,11 @@
 export const SEARCH_CACHE_TTL_DAYS = 7;
 
 /**
- * Search pagination (architecture.md §8, §12.3). Capped at 20 — Google's
- * Places API (New) `searchText` returns ~20 results per page, so a page
- * request never needs more than one page-token extension to satisfy it.
+ * Search pagination (architecture.md §8, §12.3). Capped at 20 — the
+ * original Google Places API (New) `searchText` returned ~20 results
+ * per page; kept as the page size post-migration too, sliced
+ * client-side (§7) out of the single larger Overpass batch each search
+ * fetches, since Overpass has no true pagination of its own.
  */
 export const SEARCH_PAGE_SIZE_DEFAULT = 20;
 export const SEARCH_PAGE_SIZE_MAX = 20;
@@ -59,15 +61,29 @@ export const PLACE_DETAILS_TTL_DAYS = 30;
  * schema change.
  */
 /**
- * Google Maps Platform clients (architecture.md §18 "Serverless
- * function time budget is the tightest real constraint"). `searchPlaces`
- * / `geocode` / `getPlaceDetails` accept a caller `AbortSignal` but
- * defaulted to none, leaving a slow/hung Google response bounded only
- * by the outer function timeout — this is the fallback when no
- * caller-supplied signal is passed, matching the Website Analyzer's
- * `ANALYZER_TIMEOUT_MS` pattern.
+ * `modules/geo` clients — Nominatim (geocoding) and Overpass (business
+ * search/details), both free OpenStreetMap-backed services replacing
+ * Google Maps Platform (architecture.md §18 "Serverless function time
+ * budget is the tightest real constraint"). `searchPlaces` / `geocode`
+ * / `getPlaceDetails` accept a caller `AbortSignal` but default to
+ * none, leaving a slow/hung response bounded only by the outer function
+ * timeout — this is the fallback when no caller-supplied signal is
+ * passed, matching the Website Analyzer's `ANALYZER_TIMEOUT_MS`
+ * pattern. Longer than the former `GOOGLE_API_TIMEOUT_MS` (8s) — unlike
+ * a paid, low-latency Google API, Overpass is a shared, best-effort
+ * public instance with no latency SLA; set comfortably above the
+ * Overpass query's own server-side `[timeout:25]` (seconds) so this
+ * client never aborts before the server would.
  */
-export const GOOGLE_API_TIMEOUT_MS = 8_000;
+export const GEO_API_TIMEOUT_MS = 27_000;
+
+/** Nominatim's usage policy (https://operations.osmfoundation.org/policies/nominatim/)
+ * requires a descriptive User-Agent identifying the application — the
+ * same "be a good citizen with a free public API" discipline
+ * `ANALYZER_USER_AGENT` already follows for analyzed sites. Sent on
+ * every Nominatim and Overpass request. */
+export const GEO_USER_AGENT =
+  "LeadMap/1.0 (+https://github.com/sepastudyo/leadmap)";
 
 export const ANALYZER_TIMEOUT_MS = 8_000;
 export const ANALYZER_MAX_REDIRECTS = 5;
@@ -145,9 +161,10 @@ export const AI_ANTHROPIC_MODEL = "claude-3-5-haiku-latest";
  * analyze, AI)"; Sprint 6 Phase 6.1 security-hardening pass — these two
  * routes had no rate limit at all before this). Tighter than
  * `SEARCH_RATE_LIMIT_MAX` since a miss here calls a paid LLM provider
- * rather than a bounded Google Places lookup; a cache hit (§11.3
- * `ai_results`) still counts against the same bucket, matching how the
- * search route counts idempotent-miss and cache-hit searches alike.
+ * rather than a free, keyless search provider call (§7); a cache hit
+ * (§11.3 `ai_results`) still counts against the same bucket, matching
+ * how the search route counts idempotent-miss and cache-hit searches
+ * alike.
  */
 export const AI_RATE_LIMIT_MAX = 10;
 export const AI_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -168,7 +185,7 @@ export const RECENT_SEARCHES_LIMIT = 5;
  * refresh Place Details (rate-limited)"). Tighter than
  * `AI_RATE_LIMIT_MAX` — unlike an AI call or a search, a force-refresh
  * *always* bypasses the cache by definition, so every request here is
- * guaranteed to spend real Google-API/analysis-fetch quota, never a
+ * guaranteed to make a real geo-provider/analysis-fetch call, never a
  * free cache hit.
  */
 export const BUSINESS_REFRESH_RATE_LIMIT_MAX = 5;

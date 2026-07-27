@@ -6,9 +6,14 @@ system architecture and database design are defined in
 truth for this project. Sprint progress is tracked in `docs/sprint-1.md`
 through `docs/sprint-8.md` (each with a matching `-completion.md` report
 from Sprint 5 onward); `docs/sprint-8.md` is the final sprint — v1.0.0.
+v1.1.0 then migrated Business Discovery off Google Maps Platform onto
+free, keyless OpenStreetMap-backed services (Overpass API, Nominatim,
+Leaflet) — see `docs/architecture.md` §7 for the current provider
+architecture.
 
 This repository is **feature-complete**: manual, staged business
-discovery (Google Places, cache-first); Website Analysis (SEO/CMS/
+discovery (OpenStreetMap/Overpass, cache-first, no API key required);
+Website Analysis (SEO/CMS/
 tracking/social/schema/robots/sitemap/SSL) and an explainable Lead
 Score; a lightweight lead organizer (favorites, notes, status,
 follow-ups, CSV/XLSX export) with per-user recent-search history and
@@ -28,7 +33,7 @@ for continued use, not silently dropped).
 
 TypeScript · Next.js (App Router, React Server Components) · Tailwind CSS ·
 shadcn/ui · Drizzle ORM · Auth.js · Zod · PostgreSQL (Neon/Supabase) ·
-Sentry.
+Leaflet + OpenStreetMap (tiles, Overpass API, Nominatim) · Sentry.
 
 > **Note:** this project runs on a Next.js version with breaking changes
 > from what most training data reflects — e.g. `middleware.ts` is
@@ -64,10 +69,12 @@ Sentry.
    openssl rand -base64 32
    ```
 
-   See `.env.example` for what each variable is for. Google Maps and AI
-   provider API keys are **not** environment variables — sign up, then
-   enter them per-user on the Settings page; they're stored encrypted in
-   the database (see architecture.md §7.2, §11.1, §13.4).
+   See `.env.example` for what each variable is for. Business Discovery
+   needs no API key at all (OpenStreetMap-backed, `modules/geo`); an AI
+   provider key is optional and, if used, is **not** an environment
+   variable — sign up, then enter it per-user on the Settings page,
+   where it's stored encrypted in the database (see architecture.md
+   §7.2, §11.1, §13.4).
 
 3. Run the dev server:
 
@@ -110,12 +117,12 @@ leadmap/
 │   ├── (dashboard)/          # authenticated shell: dashboard, discovery,
 │   │                         # business/[id], leads, settings
 │   └── api/                  # Route Handlers — Auth.js, discovery
-│                              # (search/maps-key/recent-searches), businesses
+│                              # (search/recent-searches), businesses
 │                              # (notes, ai/audit, ai/opportunity, details,
 │                              # analyze), favorites, notes, export, settings
 ├── modules/        # Domain logic — no Next.js/React imports
 │   ├── auth/                 # session, account
-│   ├── google/                # Places/Details/Geocoding clients
+│   ├── geo/                   # Overpass/Nominatim clients (anti-corruption layer)
 │   ├── discovery/            # search orchestration, dedup, search history
 │   ├── intelligence/{analysis,scoring}/  # Website Analysis pipeline + Lead Score
 │   ├── crm/                  # favorites, notes, status, follow-up, export
@@ -187,5 +194,6 @@ for non-commercial use — move to Pro before a commercial launch
 architecturally Hobby-specific.
 
 **Post-deploy smoke test:** visit the production URL (should redirect
-to `/sign-in`), sign up, save a Google API key in Settings, confirm the
-dashboard renders its empty state.
+to `/sign-in`), sign up, run a Discovery search (no setup required —
+Business Discovery is keyless), confirm the dashboard renders its empty
+state.

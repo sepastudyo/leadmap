@@ -9,10 +9,7 @@ import { getMaskedSettings } from "@/modules/settings";
 import { updateSettings } from "./actions";
 
 const errorMessages: Record<string, string> = {
-  InvalidInput:
-    "Enter a valid Google API key and, if selecting an AI provider, a valid AI API key.",
-  GoogleApiKeyRequired:
-    "A Google API key is required the first time you save settings.",
+  InvalidInput: "If selecting an AI provider, enter a valid AI API key.",
   AiApiKeyRequired: "Enter an AI API key for the newly selected provider.",
   AiApiKeyInvalid:
     "That AI API key couldn't be validated — check the key and provider, then try again.",
@@ -41,8 +38,10 @@ export default async function SettingsPage({
       <div>
         <h1 className="text-xl font-semibold">Settings</h1>
         <p className="text-muted-foreground text-sm">
-          Your Google Maps Platform and AI provider keys are encrypted at rest
-          and never shown again after saving.
+          Business Discovery needs no key — it runs on free OpenStreetMap data.
+          An AI provider key is optional and unlocks AI Audit and Opportunity
+          Reasoning; it&apos;s encrypted at rest and never shown again after
+          saving.
         </p>
       </div>
 
@@ -58,26 +57,6 @@ export default async function SettingsPage({
       )}
 
       <form action={updateSettings} className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="googleApiKey">Google API key</Label>
-          <Input
-            id="googleApiKey"
-            name="googleApiKey"
-            type="password"
-            autoComplete="off"
-            placeholder={
-              settings.hasGoogleApiKey
-                ? "Saved — enter a new key to replace it"
-                : "Enter your Google API key"
-            }
-          />
-          <p className="text-muted-foreground text-xs">
-            {settings.hasGoogleApiKey
-              ? "A Google API key is currently saved."
-              : "No Google API key saved yet."}
-          </p>
-        </div>
-
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="aiProvider">AI provider (optional)</Label>
           <select

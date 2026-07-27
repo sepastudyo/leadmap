@@ -13,11 +13,8 @@ import {
 } from "@/lib/idempotency";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { idempotencyKeySchema, searchRequestSchema } from "@/lib/validation";
-import {
-  GoogleApiKeyMissingError,
-  searchBusinesses,
-} from "@/modules/discovery";
-import { GoogleApiError } from "@/modules/google";
+import { searchBusinesses } from "@/modules/discovery";
+import { GeoApiError } from "@/modules/geo";
 
 const IDEMPOTENCY_BUCKET = "discovery.search";
 
@@ -30,8 +27,8 @@ const IDEMPOTENCY_BUCKET = "discovery.search";
  * Idempotency (architecture.md §12.4): implemented as specified — a
  * client-supplied `Idempotency-Key` header, the first *successful*
  * response stored briefly (`lib/idempotency`) and replayed verbatim on
- * a repeat with the same key, so Google is never called twice for the
- * same attempt. This composes with, rather than replaces,
+ * a repeat with the same key, so the search provider is never called
+ * twice for the same attempt. This composes with, rather than replaces,
  * `modules/discovery/lock.ts`'s Postgres advisory lock: the lock is a
  * content-concurrency guard (stops *any* concurrent caller from
  * double-spending on the *same search content*, key or no key); this
@@ -178,19 +175,9 @@ export async function POST(request: Request) {
       headers: rateLimitHeaders,
     });
   } catch (error) {
-    if (error instanceof GoogleApiKeyMissingError) {
+    if (error instanceof GeoApiError) {
       return jsonError(
-        "GOOGLE_API_KEY_MISSING",
-        error.message,
-        requestId,
-        422,
-        { headers: rateLimitHeaders },
-      );
-    }
-
-    if (error instanceof GoogleApiError) {
-      return jsonError(
-        "GOOGLE_API_ERROR",
+        "GEO_API_ERROR",
         "The search provider returned an error. Try again shortly.",
         requestId,
         502,

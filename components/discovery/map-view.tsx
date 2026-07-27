@@ -1,8 +1,8 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
-import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import type { OnChangeFn, RowSelectionState } from "@tanstack/react-table";
 
 import { cn } from "@/lib/utils";
@@ -10,31 +10,58 @@ import { cn } from "@/lib/utils";
 import type { DiscoveryBusiness } from "./types";
 
 /**
- * Map View (architecture.md §3 "Table View ... and a Map View
- * (Google Maps JS with markers)", §7.1, §7.2). Not exported as the
- * default entry point for `discovery-view.tsx` to import directly —
- * see the `next/dynamic({ ssr: false })` wrapper there, which is what
- * makes this lazy: neither this component's code nor the actual Maps
- * JS bundle downloads until the user first switches to the Map tab.
+ * Map View (architecture.md §3 "Table View ... and a Map View", §7.1,
+ * §7.2 — originally Google Maps JS, migrated to Leaflet + the standard
+ * OpenStreetMap tile server, both free and keyless). No API key, no
+ * `/api/discovery/maps-key` route (removed) — Leaflet loads as a plain
+ * bundled dependency, not a runtime-loaded external script, so there's
+ * nothing to fetch a key for before it can render.
  *
  * Consumes the exact same `businesses` / `rowSelection` state
  * `DiscoveryView` already passes to `DataTable` — no second fetch, no
  * separate selection model ("the table and the map must consume the
- * same source of truth").
- *
- * Classic `google.maps.Marker`, not `AdvancedMarkerElement`: Google's
- * newer marker API requires a Map ID (configured in Google Cloud
- * Console), which isn't part of this app's settings model (§5.2 has no
- * field for it) — `Marker` remains fully supported and needs no such
- * setup, so it's the pragmatic choice here, not a simplification of
- * anything this phase actually requires.
+ * same source of truth"). This component's own external contract
+ * (`MapViewProps`) is unchanged from the Google Maps version, so
+ * `discovery-view.tsx` needed no changes at all for this migration.
  */
 
 const VIEWPORT_STORAGE_KEY = "leadmap:discovery:map-viewport";
-const DEFAULT_CENTER: google.maps.LatLngLiteral = { lat: 20, lng: 0 };
+const DEFAULT_CENTER: L.LatLngTuple = [20, 0];
 const DEFAULT_ZOOM = 2;
-const SELECTED_MARKER_ICON =
-  "https://maps.google.com/mapfiles/ms/icons/blue-dot.png";
+
+// Leaflet's bundler-friendly default marker geometry (its own default
+// icon's dimensions/anchors) — used for both variants below so neither
+// looks or behaves inconsistently with the other. Explicit CDN icon
+// URLs, the same approach the original Google-based version took with
+// its own explicit "blue-dot" marker URL, sidesteps the well-known
+// Leaflet-plus-bundler issue where its default icon's *relative* asset
+// paths don't resolve correctly.
+const MARKER_ICON_SIZE: L.PointExpression = [25, 41];
+const MARKER_ICON_ANCHOR: L.PointExpression = [12, 41];
+const MARKER_POPUP_ANCHOR: L.PointExpression = [1, -34];
+const MARKER_SHADOW_URL =
+  "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png";
+
+const defaultIcon = L.icon({
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  iconRetinaUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  shadowUrl: MARKER_SHADOW_URL,
+  iconSize: MARKER_ICON_SIZE,
+  iconAnchor: MARKER_ICON_ANCHOR,
+  popupAnchor: MARKER_POPUP_ANCHOR,
+});
+
+const selectedIcon = L.icon({
+  iconUrl:
+    "https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-red.png",
+  iconRetinaUrl:
+    "https://cdn.jsdelivr.net/gh/pointhi/leaflet-color-markers@master/img/marker-icon-2x-red.png",
+  shadowUrl: MARKER_SHADOW_URL,
+  iconSize: MARKER_ICON_SIZE,
+  iconAnchor: MARKER_ICON_ANCHOR,
+  popupAnchor: MARKER_POPUP_ANCHOR,
+});
 
 type StoredViewport = { lat: number; lng: number; zoom: number };
 
@@ -59,14 +86,15 @@ function writeStoredViewport(viewport: StoredViewport) {
   }
 }
 
-function buildInfoWindowContent(business: DiscoveryBusiness): HTMLElement {
+function buildPopupContent(business: DiscoveryBusiness): HTMLElement {
   const container = document.createElement("div");
   container.style.fontSize = "13px";
   container.style.maxWidth = "220px";
 
   // `textContent`, not `innerHTML` — business name/category ultimately
-  // come from Google's API response, which architecture.md §13.3 treats
-  // as untrusted; this can't be an injection vector either way.
+  // come from the search provider's response, which architecture.md
+  // §13.3 treats as untrusted; this can't be an injection vector either
+  // way.
   const title = document.createElement("strong");
   title.textContent = business.name;
 
@@ -77,16 +105,6 @@ function buildInfoWindowContent(business: DiscoveryBusiness): HTMLElement {
   container.append(title, category);
   return container;
 }
-
-let apiOptionsSet = false;
-
-type MapLibraries = {
-  Marker: typeof google.maps.Marker;
-  InfoWindow: typeof google.maps.InfoWindow;
-  LatLngBounds: typeof google.maps.LatLngBounds;
-};
-
-type LoadState = "loading" | "error" | "ready";
 
 export type MapViewProps = {
   businesses: DiscoveryBusiness[];
@@ -104,107 +122,67 @@ export default function MapView({
   className,
 }: MapViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const mapRef = React.useRef<google.maps.Map | null>(null);
-  const librariesRef = React.useRef<MapLibraries | null>(null);
-  const infoWindowRef = React.useRef<google.maps.InfoWindow | null>(null);
-  const markersRef = React.useRef<globalThis.Map<string, google.maps.Marker>>(
+  const mapRef = React.useRef<L.Map | null>(null);
+  const markersRef = React.useRef<globalThis.Map<string, L.Marker>>(
     new globalThis.Map(),
   );
   const didFitBoundsRef = React.useRef(false);
 
-  const [state, setState] = React.useState<LoadState>("loading");
-  const [errorCode, setErrorCode] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
 
   // Init the map once. `businesses`/`rowSelection` are synced in the
   // effect below rather than re-running this — the map instance
-  // persists for the component's lifetime.
+  // persists for the component's lifetime. Unlike Google Maps JS (an
+  // async script load), Leaflet's `L.map()` is synchronous, so there's
+  // no meaningful "loading" state to track — `mapRef.current` is either
+  // set by the end of this effect or it isn't (see the `catch` below).
   React.useEffect(() => {
-    let cancelled = false;
+    if (!containerRef.current) return;
 
-    async function init() {
-      setState("loading");
-      setErrorCode(null);
-      setErrorMessage(null);
+    try {
+      const stored = readStoredViewport();
+      const map = L.map(containerRef.current, {
+        center: stored ? [stored.lat, stored.lng] : DEFAULT_CENTER,
+        zoom: stored?.zoom ?? DEFAULT_ZOOM,
+      });
 
-      try {
-        const response = await fetch("/api/discovery/maps-key");
-        const json: unknown = await response.json().catch(() => null);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19,
+      }).addTo(map);
 
-        if (!response.ok) {
-          const body = json as {
-            error?: { code?: string; message?: string };
-          } | null;
-          setErrorCode(body?.error?.code ?? null);
-          throw new Error(body?.error?.message ?? "Could not load the map.");
-        }
-
-        const { googleApiKey } = (json as { data: { googleApiKey: string } })
-          .data;
-        if (cancelled) return;
-
-        // architecture.md §7.2: the browser key, sent to the client by
-        // necessity — secured by the referrer restriction the user
-        // configures in Google Cloud Console, not by secrecy on our side.
-        if (!apiOptionsSet) {
-          setOptions({ key: googleApiKey, v: "weekly" });
-          apiOptionsSet = true;
-        }
-
-        const [mapsLibrary, markerLibrary, coreLibrary] = await Promise.all([
-          importLibrary("maps"),
-          importLibrary("marker"),
-          importLibrary("core"),
-        ]);
-
-        if (cancelled || !containerRef.current) return;
-
-        librariesRef.current = {
-          Marker: markerLibrary.Marker,
-          InfoWindow: mapsLibrary.InfoWindow,
-          LatLngBounds: coreLibrary.LatLngBounds,
-        };
-
-        const stored = readStoredViewport();
-        const map = new mapsLibrary.Map(containerRef.current, {
-          center: stored
-            ? { lat: stored.lat, lng: stored.lng }
-            : DEFAULT_CENTER,
-          zoom: stored?.zoom ?? DEFAULT_ZOOM,
-          streetViewControl: false,
-          mapTypeControl: false,
+      // "Map viewport persistence" — remembered across page reloads
+      // (sessionStorage) and, since this component stays mounted once
+      // opened (see discovery-view.tsx), across Table/Map toggles and
+      // new searches within the session too. Leaflet's `moveend` fires
+      // once a pan/zoom (including animations) settles, the same
+      // "idle" moment Google Maps JS's own `idle` event captured.
+      map.on("moveend", () => {
+        const center = map.getCenter();
+        writeStoredViewport({
+          lat: center.lat,
+          lng: center.lng,
+          zoom: map.getZoom(),
         });
+      });
 
-        // "Map viewport persistence" — remembered across page reloads
-        // (sessionStorage) and, since this component stays mounted
-        // once opened (see discovery-view.tsx), across Table/Map toggles
-        // and new searches within the session too.
-        map.addListener("idle", () => {
-          const center = map.getCenter();
-          const zoom = map.getZoom();
-          if (center && zoom !== undefined) {
-            writeStoredViewport({ lat: center.lat(), lng: center.lng(), zoom });
-          }
-        });
-
-        mapRef.current = map;
-        infoWindowRef.current = new mapsLibrary.InfoWindow();
-        setState("ready");
-      } catch (error) {
-        if (cancelled) return;
-        setState("error");
-        setErrorMessage(
-          error instanceof Error ? error.message : "Could not load the map.",
-        );
-      }
+      mapRef.current = map;
+    } catch (error) {
+      // Reflects a synchronous failure of the `L.map()` call itself
+      // (e.g. an unsupported browser) as UI state — there's no external
+      // event to defer to here, so an effect-body setState is the only
+      // option.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not load the map.",
+      );
     }
-
-    void init();
 
     const markers = markersRef.current;
     return () => {
-      cancelled = true;
-      for (const marker of markers.values()) marker.setMap(null);
+      mapRef.current?.remove();
+      mapRef.current = null;
       markers.clear();
     };
   }, []);
@@ -214,55 +192,48 @@ export default function MapView({
   // page) and reflecting `rowSelection` on marker appearance. A marker
   // click writes back into the same `rowSelection` state the table
   // uses, so selection flows both ways through one shared source of
-  // truth.
+  // truth. Runs after the init effect above within the same commit, so
+  // `mapRef.current` is already populated on the very first pass.
   React.useEffect(() => {
     const map = mapRef.current;
-    const libraries = librariesRef.current;
-    if (!map || !libraries || state !== "ready") return;
+    if (!map) return;
 
     const markers = markersRef.current;
     const nextIds = new Set(businesses.map((business) => getRowId(business)));
 
     for (const [id, marker] of markers) {
       if (!nextIds.has(id)) {
-        marker.setMap(null);
+        marker.remove();
         markers.delete(id);
       }
     }
 
-    const bounds = new libraries.LatLngBounds();
+    const bounds = L.latLngBounds([]);
     let hasAny = false;
 
     for (const business of businesses) {
       const id = getRowId(business);
       hasAny = true;
-      bounds.extend(business.location);
+      bounds.extend([business.location.lat, business.location.lng]);
 
       let marker = markers.get(id);
       if (!marker) {
-        marker = new libraries.Marker({
-          position: business.location,
-          map,
+        marker = L.marker([business.location.lat, business.location.lng], {
           title: business.name,
-        });
-        marker.addListener("click", () => {
+        }).addTo(map);
+        marker.bindPopup(buildPopupContent(business));
+        marker.on("click", () => {
           onRowSelectionChange((previous) => ({
             ...previous,
             [id]: !previous[id],
           }));
-
-          const infoWindow = infoWindowRef.current;
-          if (infoWindow && marker) {
-            infoWindow.setContent(buildInfoWindowContent(business));
-            infoWindow.open({ map, anchor: marker });
-          }
         });
         markers.set(id, marker);
       }
 
       const isSelected = Boolean(rowSelection[id]);
-      marker.setIcon(isSelected ? SELECTED_MARKER_ICON : null);
-      marker.setZIndex(isSelected ? 999 : undefined);
+      marker.setIcon(isSelected ? selectedIcon : defaultIcon);
+      marker.setZIndexOffset(isSelected ? 999 : 0);
     }
 
     // Fit bounds once, only when there was no persisted viewport to
@@ -272,7 +243,7 @@ export default function MapView({
       map.fitBounds(bounds);
       didFitBoundsRef.current = true;
     }
-  }, [businesses, rowSelection, state, getRowId, onRowSelectionChange]);
+  }, [businesses, rowSelection, getRowId, onRowSelectionChange]);
 
   return (
     <div
@@ -283,23 +254,9 @@ export default function MapView({
     >
       <div ref={containerRef} className="h-full w-full" />
 
-      {state === "loading" && (
-        <div className="bg-background/80 absolute inset-0 flex items-center justify-center">
-          <p className="text-muted-foreground text-sm">Loading map…</p>
-        </div>
-      )}
-
-      {state === "error" && (
+      {errorMessage && (
         <div className="bg-background absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center">
           <p className="text-destructive text-sm">{errorMessage}</p>
-          {errorCode === "GOOGLE_API_KEY_MISSING" && (
-            <Link
-              href="/settings"
-              className="text-sm underline underline-offset-4"
-            >
-              Go to Settings
-            </Link>
-          )}
         </div>
       )}
     </div>

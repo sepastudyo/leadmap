@@ -12,16 +12,20 @@ import type { UpdateSettingsInput } from "@/lib/validation";
 import { validateAiProviderKey } from "@/modules/ai/validate-key";
 
 /**
- * `user_settings` read/write (architecture.md §5.2, §7.2, §11.1, §13.4).
- * The Google/AI keys are encrypted with `lib/crypto` before they ever
- * reach the database and are never decrypted for display — only a
- * masked "is a key present" boolean is returned to callers. Decryption
- * exists here solely for future server-side use (Google/AI API calls in
- * Sprint 2+/5), not for round-tripping to the client.
+ * `user_settings` read/write (architecture.md §5.2, §11.1, §13.4). The
+ * AI key is encrypted with `lib/crypto` before it ever reaches the
+ * database and is never decrypted for display — only a masked "is a
+ * key present" boolean is returned to callers. Decryption exists here
+ * solely for future server-side use (AI API calls, Sprint 5), not for
+ * round-tripping to the client.
+ *
+ * No Google key lives here anymore — Business Discovery migrated off
+ * Google Maps Platform onto free, keyless OpenStreetMap-backed services
+ * (`modules/geo`); this module now manages only the still-optional,
+ * still-BYOK AI provider key.
  */
 
 export type MaskedSettings = {
-  hasGoogleApiKey: boolean;
   aiProvider: "openai" | "gemini" | "claude" | null;
   hasAiApiKey: boolean;
   updatedAt: Date | null;
@@ -32,7 +36,6 @@ function mask(
 ): MaskedSettings {
   if (!row) {
     return {
-      hasGoogleApiKey: false,
       aiProvider: null,
       hasAiApiKey: false,
       updatedAt: null,
@@ -40,7 +43,6 @@ function mask(
   }
 
   return {
-    hasGoogleApiKey: true,
     aiProvider: row.aiProvider,
     hasAiApiKey: row.aiApiKeyEnc !== null,
     updatedAt: row.updatedAt,
@@ -59,7 +61,7 @@ export async function getMaskedSettings(
   return mask(row);
 }
 
-/** Decrypted, server-only access for a future Google/AI API call. */
+/** Decrypted, server-only access for an AI API call. */
 export async function getDecryptedKeys(userId: string) {
   const [row] = await db
     .select()
@@ -70,17 +72,9 @@ export async function getDecryptedKeys(userId: string) {
   if (!row) return null;
 
   return {
-    googleApiKey: decrypt(row.googleApiKeyEnc),
     aiProvider: row.aiProvider,
     aiApiKey: row.aiApiKeyEnc ? decrypt(row.aiApiKeyEnc) : null,
   };
-}
-
-export class GoogleApiKeyRequiredError extends Error {
-  constructor() {
-    super("A Google API key is required to save settings for the first time.");
-    this.name = "GoogleApiKeyRequiredError";
-  }
 }
 
 export class AiApiKeyRequiredError extends Error {
@@ -118,19 +112,9 @@ export async function saveSettings(
     .where(eq(userSettings.userId, userId))
     .limit(1);
 
-  if (!existing && input.googleApiKey === "") {
-    throw new GoogleApiKeyRequiredError();
-  }
-
   const nextAiProvider = input.aiProvider === "" ? null : input.aiProvider;
   const providerChanged = existing?.aiProvider !== nextAiProvider;
   const changedFields: string[] = [];
-
-  const googleApiKeyEnc =
-    input.googleApiKey !== ""
-      ? encrypt(input.googleApiKey)
-      : existing!.googleApiKeyEnc;
-  if (input.googleApiKey !== "") changedFields.push("google_api_key");
 
   // A cleared provider always clears its key; a provider change requires
   // a fresh key (a key is provider-specific and can't be carried over).
@@ -158,14 +142,12 @@ export async function saveSettings(
     .insert(userSettings)
     .values({
       userId,
-      googleApiKeyEnc,
       aiProvider: nextAiProvider,
       aiApiKeyEnc,
     })
     .onConflictDoUpdate({
       target: userSettings.userId,
       set: {
-        googleApiKeyEnc,
         aiProvider: nextAiProvider,
         aiApiKeyEnc,
         updatedAt: new Date(),

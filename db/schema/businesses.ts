@@ -24,13 +24,20 @@ import { geographyPoint } from "./columns";
  * updated_at
  *
  * Sprint 2 (Business Discovery) populates the identity/discovery
- * columns from Places Search: google_place_id, name, category, address,
+ * columns from business search: google_place_id, name, category, address,
  * country, city, district, location, google_rating, google_review_count.
  * `phone` / `website_url` / `place_summary` / `details_fetched_at` /
  * `details_expires_at` stay null until Sprint 3's Place Details
  * enrichment — the repository layer's upsert (`modules/discovery`)
  * deliberately never writes to those columns, so a Sprint 2 re-search
  * can't clobber Sprint 3 data on an existing row.
+ *
+ * Column names are unchanged after the later OpenStreetMap migration
+ * (`modules/geo`, replacing Google Maps Platform): `google_place_id`
+ * now holds an OSM `{type}/{id}` reference, and `google_rating`/
+ * `google_review_count` are always `null` (OSM has no ratings/review
+ * concept) — both already-nullable/already-just-an-identifier columns,
+ * so every existing reader is unaffected.
  */
 export const businesses = pgTable(
   "businesses",

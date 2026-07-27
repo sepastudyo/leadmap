@@ -15,6 +15,15 @@ import { db, type DbClient } from "@/lib/db";
  * data. `updatePlaceDetailsForBusiness` (Sprint 3) is the mirror image:
  * it only ever writes the detail columns, never the discovery ones —
  * each write path stays scoped to the columns its own sprint owns.
+ *
+ * `googlePlaceId`/`googleRating`/`googleReviewCount` keep their
+ * original names after the OpenStreetMap migration (a later change,
+ * `modules/geo`) deliberately — the business shape this repository (and
+ * everything above it) works with was kept identical rather than
+ * renamed, so `googlePlaceId` now holds an OSM `{type}/{id}` reference
+ * and `googleRating`/`googleReviewCount` are always `null` (OSM has no
+ * ratings/review-count concept), which every existing caller already
+ * handled as nullable.
  */
 
 export type UpsertBusinessInput = {

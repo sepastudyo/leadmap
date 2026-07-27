@@ -17,11 +17,16 @@ import { withSentryConfig } from "@sentry/nextjs";
  *
  * Allowlisted origins beyond `'self'`, kept to exactly what this app's
  * code calls:
- * - `https://maps.googleapis.com` (script-src): the Maps JavaScript API
- *   loader (`components/discovery/map-view.tsx`, architecture.md §7.1).
- * - `https://maps.googleapis.com`, `https://maps.gstatic.com`,
- *   `https://maps.google.com` (img-src): map tiles and the marker icon
- *   URL used directly in `map-view.tsx`.
+ * - `https://tile.openstreetmap.org` (img-src): the OSM map tile server
+ *   (`components/discovery/map-view.tsx`, architecture.md §7.1 — Leaflet
+ *   loads tiles as plain `<img>` requests, no script-src entry needed).
+ * - `https://unpkg.com`, `https://cdn.jsdelivr.net` (img-src): Leaflet's
+ *   default and "selected" marker icon images, referenced directly by
+ *   URL in `map-view.tsx` rather than bundled.
+ * - Overpass (`overpass-api.de`) and Nominatim
+ *   (`nominatim.openstreetmap.org`) need no CSP entry at all — both are
+ *   called server-side only (`modules/geo/*.ts`, all `"server-only"`),
+ *   and CSP only restricts client-side/browser requests.
  * - `https://*.sentry.io`, `https://*.ingest.sentry.io` (connect-src):
  *   client-side error reporting (`instrumentation-client.ts`,
  *   architecture.md §15). Wildcarded since the exact ingest host is
@@ -31,11 +36,11 @@ import { withSentryConfig } from "@sentry/nextjs";
 const isDev = process.env.NODE_ENV === "development";
 const cspHeader = `
   default-src 'self';
-  script-src 'self' 'unsafe-inline' https://maps.googleapis.com${isDev ? " 'unsafe-eval'" : ""};
+  script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""};
   style-src 'self' 'unsafe-inline';
-  img-src 'self' blob: data: https://maps.googleapis.com https://maps.gstatic.com https://maps.google.com;
+  img-src 'self' blob: data: https://tile.openstreetmap.org https://unpkg.com https://cdn.jsdelivr.net;
   font-src 'self';
-  connect-src 'self' https://maps.googleapis.com https://*.sentry.io https://*.ingest.sentry.io;
+  connect-src 'self' https://*.sentry.io https://*.ingest.sentry.io;
   object-src 'none';
   base-uri 'self';
   form-action 'self';

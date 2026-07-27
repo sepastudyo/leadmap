@@ -13,8 +13,8 @@ export const citext = customType<{ data: string }>({
 
 /**
  * Raw binary storage for AES-256-GCM ciphertext. Used for
- * `user_settings.google_api_key_enc` / `ai_api_key_enc` — architecture.md
- * §5.2 specifies both as `bytea, encrypted`.
+ * `user_settings.ai_api_key_enc` — architecture.md §5.2 specifies it as
+ * `bytea, encrypted`.
  */
 export const bytea = customType<{ data: Buffer }>({
   dataType() {

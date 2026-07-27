@@ -1,4 +1,4 @@
-export type GoogleSignalsProps = {
+export type BusinessSignalsProps = {
   business: {
     category: string;
     googleRating: number | null;
@@ -22,18 +22,23 @@ function formatHours(placeSummary: unknown): string[] | null {
 }
 
 /**
- * Google Business signals (architecture.md §17 Sprint 3 deliverable:
- * "Google Business signals (rating, review count, category,
- * presence)"). `presence` = has a phone / website / hours on file —
- * Place Details enrichment having found something for this business,
- * distinct from the Website Analyzer's own presence signals.
+ * Business signals (architecture.md §17 Sprint 3 deliverable: "Google
+ * Business signals (rating, review count, category, presence)",
+ * renamed after the OpenStreetMap migration since the data no longer
+ * comes from Google — `presence` = has a phone / website / hours on
+ * file, distinct from the Website Analyzer's own presence signals).
+ * `business.googleRating`/`googleReviewCount` keep their original prop
+ * names (see `modules/discovery/businesses-repository.ts`'s own
+ * comment) but are always `null` now — OSM has no ratings/review-count
+ * concept — which this component already rendered as "—" for any
+ * business Google itself had never rated, so no behavior change here.
  */
-export function GoogleSignals({ business }: GoogleSignalsProps) {
+export function BusinessSignals({ business }: BusinessSignalsProps) {
   const hours = formatHours(business.placeSummary);
 
   return (
     <div className="border-border rounded-lg border p-4">
-      <h2 className="text-sm font-medium">Google Business signals</h2>
+      <h2 className="text-sm font-medium">Business signals</h2>
 
       <dl className="mt-3 flex flex-col gap-2 text-sm">
         <div className="flex justify-between gap-4">

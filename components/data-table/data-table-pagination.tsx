@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
  * for Discovery's cursor, which the API only ever advances forward: a
  * lower page-start re-issues the same search, which is a `search_cache`
  * hit for anything already fetched (architecture.md §6.2), never a new
- * Google call.
+ * provider call.
  */
 export type DataTablePaginationProps = {
   pageStart: number;

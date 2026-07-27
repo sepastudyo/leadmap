@@ -16,13 +16,15 @@ The system is built on five non-negotiable principles:
 
 1. **Zero-Cost First** — runs entirely on free tiers (Vercel Hobby + Neon/Supabase Postgres free tier). No paid infrastructure is required to operate the MVP.
 2. **On-Demand Architecture** — the system does work _only_ when a user asks. No background crawling, scheduling, monitoring, or automatic notifications. Every action is user-triggered.
-3. **Official APIs Only** — all business data comes from official Google Maps Platform APIs. No scraping, no ToS circumvention, ever.
-4. **Cache First** — every eligible Google response is cached in PostgreSQL and reused. Repeated searches hit the cache, not Google.
+3. **Official APIs Only** — all business data comes from official, free OpenStreetMap-backed APIs (Overpass API, Nominatim). No scraping, no ToS circumvention, ever.
+4. **Cache First** — every eligible provider response is cached in PostgreSQL and reused. Repeated searches hit the cache, not the provider.
 5. **Optional AI** — the product is fully functional without AI. AI features unlock only when a user supplies their own provider key (OpenAI, Gemini, or Claude).
 
 The architectural consequence of these principles is a **simple, single-deployable Next.js application backed by one PostgreSQL database** — no worker fleet, no queue, no Redis, no scheduler. Complexity that a heavier product would push into background infrastructure is eliminated here because _nothing runs unless a user triggers it_.
 
-**Baseline stack:** TypeScript · Next.js (App Router, React Server Components) on Vercel · PostgreSQL + PostGIS (Neon/Supabase) · Drizzle ORM · Auth.js · Zod · native `fetch` + Cheerio for analysis · Google Maps Platform · provider-agnostic optional LLM adapter.
+**Baseline stack:** TypeScript · Next.js (App Router, React Server Components) on Vercel · PostgreSQL + PostGIS (Neon/Supabase) · Drizzle ORM · Auth.js · Zod · native `fetch` + Cheerio for analysis · OpenStreetMap (Overpass API, Nominatim) + Leaflet for Business Discovery · provider-agnostic optional LLM adapter.
+
+> **v1.1.0 note:** Business Discovery originally ran on Google Maps Platform (Places Search, Place Details, Geocoding, Maps JavaScript API), as this document originally specified end-to-end. v1.1.0 migrated that one provider layer to free, keyless OpenStreetMap-backed services — Overpass API (search), Nominatim (geocoding), and Leaflet (the map, tile-rendered from `tile.openstreetmap.org`) — with zero change to anything above it (schema, caching, scoring, CRM, AI, routes). Sections below describe the **current** (post-migration) architecture; §7 in particular covers the OpenStreetMap integration that replaced the original Google Integration section.
 
 ---
 
@@ -30,15 +32,15 @@ The architectural consequence of these principles is a **simple, single-deployab
 
 ### 1.1 In scope (the only modules that exist)
 
-| #   | Module                                  | Purpose                                                                           |
-| --- | --------------------------------------- | --------------------------------------------------------------------------------- |
-| 1   | **Authentication**                      | Sign-in, sessions, account management                                             |
-| 2   | **Dashboard**                           | Landing surface: recent searches, saved leads, follow-ups due                     |
-| 3   | **Business Discovery**                  | Manual Google-powered search; table view + map view; filters                      |
-| 4   | **Business Intelligence**               | Website analysis, SEO, CMS/social detection, Google Business analysis, Lead Score |
-| 5   | **Lead Organization (Lightweight CRM)** | Favorites, notes, status, follow-up date, export                                  |
-| 6   | **AI (optional)**                       | AI Audit + Opportunity Reasoning — only when a user key exists                    |
-| 7   | **Settings**                            | Google API key, AI API key + provider, user preferences                           |
+| #   | Module                                  | Purpose                                                                      |
+| --- | --------------------------------------- | ---------------------------------------------------------------------------- |
+| 1   | **Authentication**                      | Sign-in, sessions, account management                                        |
+| 2   | **Dashboard**                           | Landing surface: recent searches, saved leads, follow-ups due                |
+| 3   | **Business Discovery**                  | Manual, keyless OpenStreetMap-powered search; table view + map view; filters |
+| 4   | **Business Intelligence**               | Website analysis, SEO, CMS/social detection, business signals, Lead Score    |
+| 5   | **Lead Organization (Lightweight CRM)** | Favorites, notes, status, follow-up date, export                             |
+| 6   | **AI (optional)**                       | AI Audit + Opportunity Reasoning — only when a user key exists               |
+| 7   | **Settings**                            | AI API key + provider, user preferences (Business Discovery needs no key)    |
 
 ### 1.2 Explicitly out of scope (removed and must never be built here)
 
@@ -56,7 +58,7 @@ Everything is synchronous and user-triggered. There is no asynchronous plane.
 ┌───────────────────────────────────────────────────────────────────────────┐
 │                                 CLIENT (browser)                            │
 │  Next.js React UI (RSC + Client Components)                                 │
-│  Google Maps JavaScript API  ← rendered with user's referrer-restricted key │
+│  Leaflet + OpenStreetMap tiles  ← no API key required                       │
 │  Table View · Map View · Business Detail · Lead Organizer · Settings        │
 └───────────────────────────────┬─────────────────────────────────────────────┘
                                  │ HTTPS (RSC payloads / JSON)
@@ -66,7 +68,8 @@ Everything is synchronous and user-triggered. There is no asynchronous plane.
 │  Edge middleware: auth gate · input guard · Postgres-backed rate limiting    │
 │  ── React Server Components (reads, cached data, dashboards)                  │
 │  ── Route Handlers (mutations + on-demand actions: search, analyze, AI)      │
-│  ── Server-side Google & AI calls (secrets never reach the browser)          │
+│  ── Server-side geo (Overpass/Nominatim) & AI calls (secrets never reach     │
+│     the browser; the geo provider itself needs no secret)                   │
 │                                                                              │
 │  NO workers · NO queue · NO Redis · NO cron · NO background scanning         │
 └───────────────┬──────────────────────────────────────────┬──────────────────┘
@@ -74,9 +77,10 @@ Everything is synchronous and user-triggered. There is no asynchronous plane.
                 ▼                                            ▼
 ┌───────────────────────────────────┐        ┌──────────────────────────────────┐
 │      PostgreSQL (Neon/Supabase)   │        │        EXTERNAL APIS              │
-│  + PostGIS  + full-text search    │        │  Google Places / Place Details /  │
-│                                   │        │  Geocoding (server-side, cached)  │
-│  System of record:                │        │  Google Maps JS (client-side)     │
+│  + PostGIS  + full-text search    │        │  Overpass API / Nominatim         │
+│                                   │        │  (server-side, cached, keyless)   │
+│  System of record:                │        │  OSM tiles via Leaflet (client-   │
+│                                   │        │  side, keyless)                   │
 │   users, settings(encrypted keys) │        │                                   │
 │   favorites, notes                │        │  User's LLM provider (optional):  │
 │  Shared cache plane:              │        │   OpenAI / Gemini / Claude        │
@@ -96,8 +100,8 @@ Everything is synchronous and user-triggered. There is no asynchronous plane.
 
 1. User submits Country → City → District → Category → Keyword.
 2. Route Handler computes a **search signature** and checks `search_cache`.
-3. **Cache hit (fresh):** return cached business set from Postgres. Zero Google cost.
-4. **Cache miss/stale:** call Google Places (server-side, user's key), **upsert businesses by `google_place_id`** (dedup), write the search→results mapping with an expiry, return.
+3. **Cache hit (fresh):** return cached business set from Postgres. Zero external cost — no request leaves the server.
+4. **Cache miss/stale:** call Overpass (server-side, keyless), **upsert businesses by `google_place_id`** (dedup — the column name is retained from the original Google integration; it now holds the OSM element id), write the search→results mapping with an expiry, return.
 5. Client renders table + map. All subsequent detail/analysis/AI actions are separate user-triggered requests.
 
 ---
@@ -108,15 +112,15 @@ Everything is synchronous and user-triggered. There is no asynchronous plane.
 
 **2. Dashboard** — A pull-based landing page rendered as RSC. Shows: recent searches (from `search_cache` owned by the user), saved leads (favorites), and **follow-ups due today** (favorites where `follow_up_at <= today`). Nothing is pushed; the dashboard simply _queries state at load time_. This is how "follow-up" works without any notification engine or scheduler.
 
-**3. Business Discovery** — Manual, staged search (§8) powered by Google Places + Geocoding. Presents results in a **Table View** (sortable, filterable, paginated, virtualized) and a **Map View** (Google Maps JS with markers). Filters operate over cached results (category, rating, has-website, score band, etc.).
+**3. Business Discovery** — Manual, staged search (§8) powered by Overpass + Nominatim (OpenStreetMap, keyless). Presents results in a **Table View** (sortable, filterable, paginated, virtualized) and a **Map View** (Leaflet + OpenStreetMap tiles, with markers). Filters operate over cached results (category, rating, has-website, score band, etc.).
 
-**4. Business Intelligence** — On opening a business: enrich via Place Details (cached), run the **Website Analysis pipeline** (§9), compute the **Lead Score** (§10), and present a Google Business analysis (rating, review count, category, presence signals). All results are stored and reused.
+**4. Business Intelligence** — On opening a business: enrich via Place Details (cached), run the **Website Analysis pipeline** (§9), compute the **Lead Score** (§10), and present business signals (rating, review count, category, presence signals, sourced from OpenStreetMap tags). All results are stored and reused.
 
 **5. Lead Organization (Lightweight CRM)** — A _personal organizer_ for discovered leads, explicitly **not** an outreach/automation CRM. Capabilities: **favorite** a business, attach **notes**, set a **status** label (e.g., New / Reviewing / Qualified / Not a fit / Won — a manual tag, no automation), set a **follow-up date** (surfaced on the dashboard), and **export** selected leads to CSV/XLSX. No messaging, no email, no reminders-by-notification.
 
 **6. AI (optional)** — Two features only: **AI Audit** (structured critique of a business's digital presence from its stored analysis) and **Opportunity Reasoning** (a structured explanation of _why_ the business is or isn't a promising sales opportunity, grounded in the score + analysis). Available only when the user has stored a valid provider key. No message/email/proposal generation of any kind (§11).
 
-**7. Settings** — Manage the **Google API key**, the **AI API key + provider selection**, and **user preferences** (default country/city, results-per-page, table columns, units). Keys are validated on save and stored **encrypted at rest** (§13.4).
+**7. Settings** — Manage the **AI API key + provider selection** and **user preferences** (default country/city, results-per-page, table columns, units). Business Discovery needs no key at all (§7), so Settings has nothing to configure for it. The AI key is validated on save and stored **encrypted at rest** (§13.4).
 
 ---
 
@@ -141,7 +145,7 @@ leadmap/
 │
 ├── modules/                      # Domain logic — no Next.js/React imports
 │   ├── auth/                     # session, account, RBAC-ready policies
-│   ├── google/                   # Places/Details/Geocoding clients + cache-aware access
+│   ├── geo/                      # Overpass/Nominatim clients (anti-corruption layer)
 │   ├── discovery/                # search orchestration + signatures + dedup
 │   ├── intelligence/
 │   │   ├── analysis/             # website analysis pipeline + stages
@@ -171,7 +175,7 @@ leadmap/
 **Why this shape**
 
 - **`app/` is thin.** Route Handlers and Server Components call `modules/`; they contain no business rules. This keeps logic out of the framework and makes a future mobile client or public API a matter of adding a new caller — not a rewrite.
-- **`modules/` is framework-free.** Each domain (Google, discovery, analysis, scoring, CRM, AI) is isolated and unit-testable. External APIs sit behind anti-corruption layers (`modules/google`, `modules/ai`) so a provider change touches one folder.
+- **`modules/` is framework-free.** Each domain (geo, discovery, analysis, scoring, CRM, AI) is isolated and unit-testable. External APIs sit behind anti-corruption layers (`modules/geo`, `modules/ai`) so a provider change touches one folder — proven in practice by the v1.1.0 Google→OpenStreetMap migration, which touched only `modules/geo` and its direct callers.
 - **`lib/db` centralizes scoping.** Every user-scoped read/write goes through shared helpers that inject the owning user's id — accidental cross-user leakage is designed out, not guarded per-callsite.
 - **`db/schema` is the single schema.** One migration history; no drift.
 - **`docs/adr`** captures every non-trivial decision so the team can build without re-litigating design.
@@ -185,7 +189,7 @@ leadmap/
 ### 5.1 Two data planes
 
 - **User plane (scoped to the owning user):** `users`, `user_settings`, `favorites`, `notes`, `ai_results`. Private to each account.
-- **Shared cache plane (global, deduplicated):** `businesses`, `search_cache`, `website_analyses`, `lead_scores`, `scoring_rules`, `scoring_rulesets`. Populated by any user's on-demand action and reused by all, because the same real business searched by two agencies should cost one Google call, not two. This is the mechanism that makes Cache First real.
+- **Shared cache plane (global, deduplicated):** `businesses`, `search_cache`, `website_analyses`, `lead_scores`, `scoring_rules`, `scoring_rulesets`. Populated by any user's on-demand action and reused by all, because the same real business searched by two agencies should cost one provider call, not two. This is the mechanism that makes Cache First real.
 
 > The schema carries an `organization_id` seam (nullable, defaulting to the user's personal org) so a future multi-seat model can be added without a migration of existing rows. Scope requires only single users today; the design does not preclude teams later.
 
@@ -197,11 +201,12 @@ Types are logical design intent, not DDL.
 `id (uuid pk)` · `email (citext unique)` · `name` · `password_hash (nullable, for OAuth-only)` · `auth_provider` · `created_at` · `updated_at` · `deleted_at (nullable)`
 
 **`user_settings`** — one row per user
-`user_id (fk pk)` · `google_api_key_enc (bytea, encrypted)` · `ai_provider (enum: openai|gemini|claude|null)` · `ai_api_key_enc (bytea, encrypted, nullable)` · `preferences (jsonb)` · `updated_at`
+`user_id (fk pk)` · `ai_provider (enum: openai|gemini|claude|null)` · `ai_api_key_enc (bytea, encrypted, nullable)` · `preferences (jsonb)` · `updated_at`
+_Originally also carried `google_api_key_enc`; dropped by a v1.1.0 migration once Business Discovery became keyless (§7) — the AI key is the only credential this table stores now._
 
 **`businesses`** — GLOBAL canonical business + Place Details cache
 `id (uuid pk)` · `google_place_id (text unique)` · `name` · `category` · `phone (nullable)` · `website_url (nullable)` · `address` · `country` · `city` · `district (nullable)` · `location (geography POINT — PostGIS)` · `google_rating (nullable)` · `google_review_count (nullable)` · `place_summary (jsonb — permitted cached fields)` · `details_fetched_at (nullable)` · `details_expires_at (nullable)` · `first_seen_at` · `updated_at`
-_The `google_place_id` is the durable dedup + join key (storable indefinitely). Detail fields carry an expiry (§6)._
+_The `google_place_id`/`google_rating`/`google_review_count` column names predate the v1.1.0 OpenStreetMap migration and are kept as-is (renaming would ripple through every layer above the provider for no functional gain — §7). `google_place_id` now holds an OSM element id (`{type}/{id}`) and is still the durable dedup + join key (storable indefinitely); `google_rating`/`google_review_count` are `null` for OSM-sourced businesses, since OSM carries no rating data. Detail fields carry an expiry (§6)._
 
 **`search_cache`** — GLOBAL search reuse + dedup
 `id (uuid pk)` · `signature (text unique)` · `params (jsonb — normalized query)` · `place_ids (jsonb array — ordered result Place IDs)` · `result_count (int)` · `provider_page_tokens (jsonb, nullable)` · `created_at` · `expires_at` · `last_accessed_at`
@@ -286,16 +291,16 @@ Cache First is implemented entirely in Postgres. There is no separate cache serv
 
 ### 6.1 What is cached, and for how long
 
-| Data                                           | Table                                             | TTL                                           | Rationale                                                                                   |
-| ---------------------------------------------- | ------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| **Place ID** (identity)                        | `businesses.google_place_id`                      | **Indefinite**                                | Place IDs are stable identifiers permitted for long-term storage; the dedup backbone        |
-| **Search results** (Place ID list for a query) | `search_cache`                                    | **7–14 days** (configurable)                  | Search intent is stable short-term; refresh keeps results current                           |
-| **Place Details** (name/phone/website/hours)   | `businesses.place_summary` + `details_expires_at` | **~30 days** (ToS-bounded)                    | Bounded caching for performance within Google's terms                                       |
-| **Website analysis**                           | `website_analyses` + `expires_at`                 | **30–90 days** (our data)                     | This is _our_ derived data; longer TTL is fine, but stale analysis is re-run on request     |
-| **Lead score**                                 | `lead_scores`                                     | Recomputed when analysis or ruleset changes   | Derived; cheap to recompute                                                                 |
-| **AI results**                                 | `ai_results`                                      | Indefinite until inputs change (`input_hash`) | The user paid tokens; never re-spend for identical input                                    |
-| **Idempotency-Key responses** (§12.4)          | `idempotency_keys` + `expires_at`                 | **24 hours** (short, configurable)            | Long enough to cover realistic client retries; short because it's a safety net, not a cache |
-| **Ratings / reviews text / photo bytes**       | **not stored**                                    | —                                             | Refreshed live via Place Details / rendered by reference; see ToS note (§7)                 |
+| Data                                           | Table                                             | TTL                                           | Rationale                                                                                                                                                  |
+| ---------------------------------------------- | ------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Place ID** (identity)                        | `businesses.google_place_id`                      | **Indefinite**                                | Place IDs are stable identifiers permitted for long-term storage; the dedup backbone                                                                       |
+| **Search results** (Place ID list for a query) | `search_cache`                                    | **7–14 days** (configurable)                  | Search intent is stable short-term; refresh keeps results current                                                                                          |
+| **Place Details** (name/phone/website/hours)   | `businesses.place_summary` + `details_expires_at` | **~30 days**                                  | Bounded caching for performance; kept from the original Google-ToS-driven TTL as a sane default even though OSM's own license (§7) has no such caching cap |
+| **Website analysis**                           | `website_analyses` + `expires_at`                 | **30–90 days** (our data)                     | This is _our_ derived data; longer TTL is fine, but stale analysis is re-run on request                                                                    |
+| **Lead score**                                 | `lead_scores`                                     | Recomputed when analysis or ruleset changes   | Derived; cheap to recompute                                                                                                                                |
+| **AI results**                                 | `ai_results`                                      | Indefinite until inputs change (`input_hash`) | The user paid tokens; never re-spend for identical input                                                                                                   |
+| **Idempotency-Key responses** (§12.4)          | `idempotency_keys` + `expires_at`                 | **24 hours** (short, configurable)            | Long enough to cover realistic client retries; short because it's a safety net, not a cache                                                                |
+| **Ratings / reviews text / photo bytes**       | **not stored**                                    | —                                             | OSM carries no rating/review/photo data for most businesses; nothing to store or warehouse (§7)                                                            |
 
 ### 6.2 TTL and refresh (lazy, read-through)
 
@@ -308,7 +313,7 @@ On every read the access path checks freshness:
 ### 6.3 Duplicate prevention (the core of Cache First)
 
 - **By identity:** every business upsert is keyed on `google_place_id` (unique). The same business returned by different searches, districts, or users resolves to **one row**.
-- **By query:** each search is reduced to a normalized **signature** — a hash of `{country, city, district, category, keyword}` after trimming/lowercasing/canonicalizing. Identical searches (even across users) map to the same `search_cache` row, so a repeated search is a single indexed lookup, not a new Google request.
+- **By query:** each search is reduced to a normalized **signature** — a hash of `{country, city, district, category, keyword}` after trimming/lowercasing/canonicalizing. Identical searches (even across users) map to the same `search_cache` row, so a repeated search is a single indexed lookup, not a new provider request.
 - **Upsert semantics:** discovery writes are idempotent — insert-or-update on the unique keys — so concurrent identical searches converge safely without duplicates.
 
 ### 6.4 Cache invalidation
@@ -320,30 +325,32 @@ On every read the access path checks freshness:
 
 ---
 
-## 7. Google Integration
+## 7. Business Discovery Provider Integration (OpenStreetMap)
 
-> **Terms-of-Service note (mandatory review before launch):** Google Maps Platform permits **storing Place IDs indefinitely** and allows **limited, temporary caching** of some content strictly to improve performance (historically up to ~30 days), but it **restricts long-term storage** of much Place Content and prohibits storing/serving certain fields (e.g., photos, some review data) outside its terms. These terms change. The cache TTLs in §6 are set to respect this, and the product's durable value (analysis + scoring) is built from **our own derived data**, not warehoused Google Content. **The team must verify the current Google Maps Platform Terms of Service and confirm compliance before production.**
+> **v1.1.0 migration.** This section originally specified Google Maps Platform (Places Search, Place Details, Geocoding, Maps JavaScript API), each requiring a user-supplied, billed API key. v1.1.0 replaced that entire provider layer with free, keyless OpenStreetMap-backed services — **Overpass API** (search + details), **Nominatim** (geocoding), and **Leaflet** rendering OSM tiles (the map) — with no change to anything above the provider (schema, caching, scoring, CRM, AI, routes; §4's anti-corruption-layer design is what made this a one-folder change, confined to `modules/geo`). Business Discovery now requires **zero API keys** — no ToS-restricted quota, no billing, no key to store or secure.
+>
+> **Licensing note:** OpenStreetMap data is available under the **Open Database License (ODbL)** — free to use, including commercially, with attribution (the app's Map View credits "© OpenStreetMap contributors," per OSM's own attribution guideline). Unlike the original Google ToS constraints this section used to document, ODbL imposes no caching-duration restriction; the TTLs in §6 are kept as sane defaults for freshness, not compliance.
 
-### 7.1 How each API is used
+### 7.1 How each service is used
 
-| API                     | Where           | Use                                                                     | Cached?                                                                              |
-| ----------------------- | --------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| **Places Search**       | Server-side     | Discovery by category/keyword within a geographic area                  | Result Place-ID list → `search_cache` (TTL)                                          |
-| **Place Details**       | Server-side     | Enrich a business (phone, website, hours, category)                     | Permitted fields → `businesses.place_summary` (~30-day TTL)                          |
-| **Geocoding**           | Server-side     | Resolve Country/City/District to coordinates for search + map centering | Coordinates cached in `businesses.location` (geocoded coords are storable)           |
-| **Maps JavaScript API** | **Client-side** | Interactive map + markers                                               | Not server-cached; rendered live with the user's **referrer-restricted** browser key |
+| Service                         | Where           | Use                                                                     | Cached?                                                                   |
+| ------------------------------- | --------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| **Overpass API** (search)       | Server-side     | Discovery by category/keyword within a geographic area (OSM tag query)  | Result id list → `search_cache` (TTL)                                     |
+| **Overpass API** (lookup by id) | Server-side     | Enrich/refresh a single business (phone, website, category, address)    | Permitted fields → `businesses.place_summary` (~30-day TTL)               |
+| **Nominatim** (geocoding)       | Server-side     | Resolve Country/City/District to coordinates for search + map centering | Coordinates cached in `businesses.location`                               |
+| **Leaflet + OSM tile server**   | **Client-side** | Interactive map + markers                                               | Not server-cached; tiles fetched directly by the browser, no key required |
 
 ### 7.2 Key handling
 
-- The user provides **their own Google Cloud API key(s)** in Settings.
-- **Server key** (Places/Details/Geocoding): stored **encrypted at rest**, used only server-side, restricted to the specific Google APIs it needs. (Note: Vercel serverless has no fixed egress IP, so IP-restriction isn't reliable on the zero-cost target — we rely on **API-scoped restriction** plus encrypted server-only storage. This trade-off is documented in Risks §18.)
-- **Browser key** (Maps JS): exposed to the client by necessity (all Maps-JS keys are), and secured by **HTTP-referrer restrictions** the user configures for their domain. The user may use one appropriately-restricted key or two keys; the app supports both.
+- **None required.** Business Discovery has no API key of any kind — nothing for the user to obtain, no Settings field, no encrypted-at-rest storage for this provider (contrast with §13.4, which still applies to the optional AI key).
+- Nominatim's usage policy requires a descriptive `User-Agent` header (not a key) on every request, sent server-side by `modules/geo` — this is a courtesy identifier, not a credential, and carries no secrecy requirement.
+- Overpass has no authentication at all; it's a public, rate-limited service intended for exactly this kind of moderate, on-demand query volume.
 
-### 7.3 Cost & quota discipline
+### 7.3 Rate & load discipline
 
-- All server-side Google calls are **cache-first** (§6): the cache is consulted before Google every time.
-- **Field masks** on Place Details request only the fields we display, minimizing billed data.
-- Discovery is **manual and deduplicated** — never blanket area crawling — so the user's Google quota is spent only on genuinely new searches. Because users bring their own keys, cost accrues to the user; the cache still minimizes it out of good citizenship and performance.
+- All server-side calls are **cache-first** (§6): the cache is consulted before the provider every time.
+- Discovery is **manual and deduplicated** — never blanket area crawling — so load on the shared, free Overpass/Nominatim infrastructure stays proportional to genuinely new searches, the same good-citizenship posture this section always specified, now enforced out of courtesy to a shared public resource rather than to protect a paid quota.
+- Nominatim's ~1 request/second guidance is respected by construction: geocoding happens once per cache-miss search, never in a loop.
 
 ---
 
@@ -362,9 +369,9 @@ Country ▸ City ▸ District ▸ Business Category ▸ Keyword ▸ [Search]
              ▼                         ▼
       search_cache HIT           search_cache MISS
      (fresh, within TTL)                │
-             │                Google Places Search (server, user key)
+             │                Overpass API Search (server, keyless)
              │                          │
-             │                 upsert businesses (dedup by Place ID)
+             │                 upsert businesses (dedup by OSM element id)
              │                 write search_cache (+ expires_at)
              └───────────┬──────────────┘
                          ▼
@@ -373,13 +380,13 @@ Country ▸ City ▸ District ▸ Business Category ▸ Keyword ▸ [Search]
           ┌──────────────┴───────────────┐
           ▼                              ▼
      TABLE VIEW                      MAP VIEW
-  sortable · filterable          Google Maps JS + markers
-  paginated · virtualized        (client, referrer-restricted key)
+  sortable · filterable          Leaflet + OSM tiles + markers
+  paginated · virtualized        (client, keyless)
 ```
 
 - **Inputs** are validated (Zod) and normalized before signature computation.
 - **Filters** (rating, has-website, category, score band, distance) apply to the returned/cached set — client-side for the current page, server-side (indexed) for larger result sets.
-- **Pagination** is cursor/offset over the cached result list; Google page tokens (if used to fetch more) are stored on the `search_cache` row so "load more" can extend a cached search without restarting it.
+- **Pagination** is cursor/offset over the cached result list; provider page tokens (if used to fetch more) are stored on the `search_cache` row so "load more" can extend a cached search without restarting it. (Overpass has no true pagination; a single generous batch is fetched per search and the existing cursor slices through it client-side.)
 
 ---
 
@@ -487,7 +494,7 @@ AI is **strictly optional**. The entire application works with **no AI key**. AI
 ### 11.2 The only two features
 
 - **AI Audit** — input: the stored `website_analysis` + business facts. Output: a **structured** critique — strengths, weaknesses, and concrete digital-presence gaps (e.g., missing tracking, weak SEO signals, no schema). No prose outreach, no messaging.
-- **Opportunity Reasoning** — input: `lead_score.breakdown` + analysis + Google Business signals. Output: a **structured** explanation of _why_ the business is or isn't a promising sales opportunity for an agency, with the reasoning tied to specific signals.
+- **Opportunity Reasoning** — input: `lead_score.breakdown` + analysis + business signals (rating/review count/category, sourced from OpenStreetMap — §7). Output: a **structured** explanation of _why_ the business is or isn't a promising sales opportunity for an agency, with the reasoning tied to specific signals.
 
 **Explicitly forbidden AI outputs:** emails, cold messages, WhatsApp/Instagram DMs, proposals, meeting scripts, or any content intended to be sent to the business. The AI _analyzes and reasons_; it never _drafts outreach_.
 
@@ -532,7 +539,7 @@ Error:   { "error": { "code": "VALIDATION_ERROR", "message": "...", "details": [
 
 - **Auth:** Auth.js session cookies (httpOnly, secure, sameSite=lax); CSRF protection on mutations. All authenticated endpoints resolve the owning user from the session; user-scoped queries are filtered by that id centrally.
 - **Rate limiting (no Redis):** a **Postgres-backed fixed-window limiter** (`rate_limits` table, atomic upsert per `subject+bucket+window`) applied at the edge/middleware. Tighter buckets on expensive actions (search, analyze, AI). Response headers `X-RateLimit-*`; `429 + Retry-After` on exhaustion.
-- **Idempotency:** `Idempotency-Key` on paid actions (search/analyze/AI) so client retries don't double-spend the user's Google/AI quota; the first result is stored briefly and replayed on retry.
+- **Idempotency:** `Idempotency-Key` on paid actions (search/analyze/AI) so client retries don't double-spend the user's AI quota (search is keyless post-§7, but still idempotency-guarded — it's still a shared, rate-limited external call worth deduplicating); the first result is stored briefly and replayed on retry.
 
 ### 12.5 Representative endpoints
 
@@ -567,13 +574,13 @@ Single-user ownership model today, enforced by resolving the session user and **
 
 ### 13.3 Input validation
 
-**Zod at every boundary** — Route Handlers, forms, and search inputs share the same schemas. All external website content and Google responses are treated as untrusted and validated/normalized before storage or rendering.
+**Zod at every boundary** — Route Handlers, forms, and search inputs share the same schemas. All external website content and provider (Overpass/Nominatim) responses are treated as untrusted and validated/normalized before storage or rendering.
 
 ### 13.4 Secrets (critical — user-provided keys)
 
 - **Application secrets** (DB URL, encryption master key, OAuth secrets) live in **Vercel environment variables**, per environment, never in code or the client bundle; validated at boot (fail fast).
-- **User-provided Google/AI keys** are **encrypted at rest** using **AES-256-GCM envelope encryption** with a server-side master key from the environment. Keys are decrypted only server-side, only when needed, and **never returned to the client** after entry (Settings shows a masked value). Key changes are audited.
-- **Maps JS key** is the one intentional client-exposed key, secured by the user's **HTTP-referrer restrictions**.
+- **User-provided AI keys** are **encrypted at rest** using **AES-256-GCM envelope encryption** with a server-side master key from the environment. Keys are decrypted only server-side, only when needed, and **never returned to the client** after entry (Settings shows a masked value). Key changes are audited.
+- **No client-exposed provider key exists any more.** Business Discovery is keyless end to end (§7) — there is no browser-side Maps key to restrict or secure, and one fewer secret-handling surface than the original design.
 
 ### 13.5 OWASP Top 10
 
@@ -595,11 +602,11 @@ Postgres-backed rate limits + idempotency on paid actions; CAPTCHA/bot defense o
 ## 14. Performance
 
 - **React Server Components:** data-heavy views (dashboard, business detail, lead lists) render on the server, shipping minimal JS and reading Postgres directly — fast and cheap on Hobby.
-- **Lazy loading & code splitting:** dynamic imports for heavy client pieces (Google Map, charts, export dialog); route-level splitting; defer non-critical UI.
+- **Lazy loading & code splitting:** dynamic imports for heavy client pieces (Leaflet map, charts, export dialog); route-level splitting; defer non-critical UI.
 - **Pagination:** cursor/offset everywhere; never load unbounded sets.
 - **Virtualization:** windowed rendering (TanStack Virtual) for the results table and lead lists so tens of thousands of rows render without DOM blowup.
-- **Image optimization:** Next.js `Image` with responsive AVIF/WebP for app assets; **Google business photos are rendered by reference** (via Maps/Places), never re-hosted — avoiding storage cost and Hobby image-optimization limits.
-- **Caching:** Cache First (§6) means most reads never touch Google; RSC/data caching and short-TTL response caching reduce repeated work; TanStack Query provides stale-while-revalidate on the client.
+- **Image optimization:** Next.js `Image` with responsive AVIF/WebP for app assets. OSM carries no business-photo data, so there's nothing to render by reference here (the original Google Places photo-by-reference approach no longer applies — §7).
+- **Caching:** Cache First (§6) means most reads never touch the search provider; RSC/data caching and short-TTL response caching reduce repeated work; TanStack Query provides stale-while-revalidate on the client.
 - **Database indexes:** the index set in §5.4 targets every hot path (Place-ID dedup, geo bounds, text search, faceted filters, follow-ups, top-score ordering). Hot queries are `EXPLAIN`-checked; JSONB fields get expression/GIN indexes as query patterns emerge.
 
 ---
@@ -665,24 +672,27 @@ Provider adapters (OpenAI/Gemini/Claude) behind one interface; key validation pe
 Security hardening pass (rate limits, validation coverage, secrets, CSP, OWASP checklist, SSRF review); performance pass (indexes verified, virtualization, lazy loading, RSC caching); observability + structured logging; backup/restore drill; CI/CD gates finalized; documentation + ADRs; commercial-plan checklist (§18).
 **Working app:** a hardened, monitored, documented production release.
 
+> **Post-v1.0.0 note:** Sprints 1–2 above describe Business Discovery as originally built, on Google Places/Geocoding/Maps JS with user-supplied keys — an accurate record of what those sprints actually shipped at the time. Two further sprints extended this plan in practice (Sprint 7: search history + additional filters; Sprint 8: hardening + the v1.0.0 release), and v1.1.0 then migrated Business Discovery off Google entirely onto the free, keyless OpenStreetMap stack described in the current §7 — with the Settings/key-management work from Sprint 1 correspondingly reduced to AI keys only. This history is left as-is rather than rewritten, since it's what each sprint actually delivered; §7 and the sections it's cross-referenced from are the current source of truth for how Business Discovery works today.
+
 ---
 
 ## 18. Risks & Mitigations
 
-| Risk                                       | Description                                                                                              | Mitigation                                                                                                                                                                   |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Vercel Hobby is for non-commercial use** | Hobby's terms target personal/non-commercial projects; a commercial launch on Hobby likely violates them | Use Hobby for development/MVP/demo; **move to Vercel Pro at commercial launch** — the architecture is unchanged, only the plan. Budget for this as the single expected cost. |
-| **Free-tier Postgres storage/limits**      | ~0.5 GB and auto-suspend won't hold millions of businesses or heavy traffic                              | On-Demand + Cache First keep stored rows to what's actually searched; **upgrade tier / add replica non-disruptively** when needed (§16)                                      |
-| **Serverless function time limit**         | Analysis/AI must finish within the Hobby function ceiling                                                | HTTP-only analysis (no headless browser); stream AI; bound response size/redirects; keep work per request small                                                              |
-| **No fixed egress IP on serverless**       | Google server key can't be reliably IP-restricted on the zero-cost target                                | Use **API-scoped** key restrictions + encrypted server-only storage; document; a static IP would require paid proxy (deferred)                                               |
-| **Google ToS caching limits**              | Long-term storage of some Place Content is restricted                                                    | ToS-compliant TTLs (§6); store only Place IDs + coords long-term; build durable value from **our** derived analysis; **legal review before launch**                          |
-| **JS-rendered sites analyzed partially**   | HTTP-only analyzer can't execute SPA JavaScript                                                          | Analyze served HTML + headers (covers most signals); clearly mark confidence; headless rendering intentionally out of scope for cost                                         |
-| **SSRF via analyzer**                      | Fetching arbitrary URLs can hit internal/metadata endpoints                                              | Strict private-IP/metadata blocking, redirect/size/time caps, controlled egress — P0                                                                                         |
-| **User AI/Google key exposure**            | Storing third-party secrets is sensitive                                                                 | AES-256-GCM at rest, server-only decrypt, masked in UI, never sent to client, audited changes                                                                                |
-| **Prompt injection from analyzed pages**   | Malicious page text could hijack AI                                                                      | Untrusted content delimited as data, schema-constrained outputs, model instructed to analyze-not-obey                                                                        |
-| **AI provider variability/outage**         | Different providers/models, failures                                                                     | Provider adapter + validation + one repair retry + graceful degradation; app never depends on AI                                                                             |
-| **Data accuracy / over-trust in scores**   | Automated scores could mislead                                                                           | Explainable breakdowns, confidence signals, "guidance not verdict" framing                                                                                                   |
-| **Privacy/GDPR (business + owner data)**   | Cached business data may include personal data                                                           | Minimization, user-plane erasure via soft delete + purge, regional review, **legal review**                                                                                  |
+| Risk                                       | Description                                                                                                                                                                                          | Mitigation                                                                                                                                                                   |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Vercel Hobby is for non-commercial use** | Hobby's terms target personal/non-commercial projects; a commercial launch on Hobby likely violates them                                                                                             | Use Hobby for development/MVP/demo; **move to Vercel Pro at commercial launch** — the architecture is unchanged, only the plan. Budget for this as the single expected cost. |
+| **Free-tier Postgres storage/limits**      | ~0.5 GB and auto-suspend won't hold millions of businesses or heavy traffic                                                                                                                          | On-Demand + Cache First keep stored rows to what's actually searched; **upgrade tier / add replica non-disruptively** when needed (§16)                                      |
+| **Serverless function time limit**         | Analysis/AI must finish within the Hobby function ceiling                                                                                                                                            | HTTP-only analysis (no headless browser); stream AI; bound response size/redirects; keep work per request small                                                              |
+| **~~No fixed egress IP on serverless~~**   | ~~Google server key can't be reliably IP-restricted on the zero-cost target~~ — resolved by §7's v1.1.0 migration: Business Discovery is now keyless, so there's no server key to IP-restrict at all | N/A — superseded                                                                                                                                                             |
+| **~~Google ToS caching limits~~**          | ~~Long-term storage of some Place Content is restricted~~ — resolved: OpenStreetMap's ODbL license (§7) imposes no such caching-duration restriction                                                 | N/A — superseded                                                                                                                                                             |
+| **JS-rendered sites analyzed partially**   | HTTP-only analyzer can't execute SPA JavaScript                                                                                                                                                      | Analyze served HTML + headers (covers most signals); clearly mark confidence; headless rendering intentionally out of scope for cost                                         |
+| **SSRF via analyzer**                      | Fetching arbitrary URLs can hit internal/metadata endpoints                                                                                                                                          | Strict private-IP/metadata blocking, redirect/size/time caps, controlled egress — P0                                                                                         |
+| **User AI key exposure**                   | Storing third-party secrets is sensitive                                                                                                                                                             | AES-256-GCM at rest, server-only decrypt, masked in UI, never sent to client, audited changes                                                                                |
+| **Overpass/Nominatim availability**        | Both are free, shared public services with no SLA — Overpass in particular can be slow or rate-limit under heavy public load                                                                         | Cache First (§6) minimizes call volume; requests are polite/deduplicated; a provider outage degrades Discovery gracefully (empty results) rather than breaking the app       |
+| **Prompt injection from analyzed pages**   | Malicious page text could hijack AI                                                                                                                                                                  | Untrusted content delimited as data, schema-constrained outputs, model instructed to analyze-not-obey                                                                        |
+| **AI provider variability/outage**         | Different providers/models, failures                                                                                                                                                                 | Provider adapter + validation + one repair retry + graceful degradation; app never depends on AI                                                                             |
+| **Data accuracy / over-trust in scores**   | Automated scores could mislead                                                                                                                                                                       | Explainable breakdowns, confidence signals, "guidance not verdict" framing                                                                                                   |
+| **Privacy/GDPR (business + owner data)**   | Cached business data may include personal data                                                                                                                                                       | Minimization, user-plane erasure via soft delete + purge, regional review, **legal review**                                                                                  |
 
 ---
 
@@ -690,26 +700,26 @@ Security hardening pass (rate limits, validation coverage, secrets, CSP, OWASP c
 
 All choices are free-tier compatible and justified; alternatives noted.
 
-| Concern                | Recommendation                                               | Why                                                                                                       | Alternatives                            |
-| ---------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| Language               | **TypeScript**                                               | End-to-end type safety across UI, modules, schema                                                         | —                                       |
-| Framework              | **Next.js (App Router, RSC)**                                | Server-first rendering, zero-cost on Vercel, single deployable                                            | Remix, SvelteKit                        |
-| UI                     | **React + Tailwind + shadcn/ui (Radix)**                     | Accessible, consistent, owned components; fast to build                                                   | Chakra, MUI                             |
-| ORM                    | **Drizzle**                                                  | Lightweight, excellent serverless cold-start profile, edge-friendly, tiny footprint — ideal for zero-cost | **Prisma** (richer DX, heavier), Kysely |
-| Database               | **PostgreSQL + PostGIS (Neon/Supabase free)**                | Relational + geo + JSONB + full-text in one engine; free tiers with pooling + PITR                        | RDS/Aurora (paid, later)                |
-| Auth                   | **Auth.js**                                                  | Free, self-hosted sessions, OAuth support, no external dependency                                         | Clerk (free tier, external), Lucia      |
-| Validation             | **Zod**                                                      | One schema reused across API + forms; strong inference                                                    | Valibot (smaller), Yup                  |
-| HTTP + parse           | **Native `fetch` (undici) + Cheerio**                        | Fast, dependency-light HTML analysis with no headless browser                                             | JSDOM (heavier)                         |
-| Maps                   | **Google Maps JavaScript API**                               | Official, required by scope; user's referrer-restricted key                                               | — (scope-fixed)                         |
-| AI                     | **Provider adapter (OpenAI/Gemini/Claude) or Vercel AI SDK** | Provider-agnostic, structured output, streaming                                                           | Direct SDKs, LangChain (heavier)        |
-| Encryption             | **Node `crypto` (AES-256-GCM)**                              | Built-in, no dependency, standard envelope encryption for user keys                                       | libsodium                               |
-| Rate limiting          | **Postgres-backed limiter**                                  | No Redis; zero-cost; sufficient at this scale                                                             | Upstash free tier (optional)            |
-| Client data/state      | **TanStack Query**                                           | SWR caching, less boilerplate                                                                             | SWR, RTK Query                          |
-| Table + virtualization | **TanStack Table + TanStack Virtual**                        | Handles large result sets performantly                                                                    | react-window, ag-grid                   |
-| Export                 | **SheetJS / streamed CSV**                                   | XLSX/CSV generation in-request, no storage                                                                | csv-stringify                           |
-| Monitoring             | **Sentry + Vercel Analytics + uptime**                       | Free tiers cover errors, Web Vitals, uptime                                                               | Grafana stack                           |
-| Testing                | **Vitest + Testing Library + Playwright**                    | Fast unit + integration + e2e                                                                             | Jest, Cypress                           |
-| CI/CD                  | **GitHub Actions + Vercel Git**                              | Free, gated migrations, preview deploys                                                                   | —                                       |
+| Concern                | Recommendation                                               | Why                                                                                                       | Alternatives                              |
+| ---------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Language               | **TypeScript**                                               | End-to-end type safety across UI, modules, schema                                                         | —                                         |
+| Framework              | **Next.js (App Router, RSC)**                                | Server-first rendering, zero-cost on Vercel, single deployable                                            | Remix, SvelteKit                          |
+| UI                     | **React + Tailwind + shadcn/ui (Radix)**                     | Accessible, consistent, owned components; fast to build                                                   | Chakra, MUI                               |
+| ORM                    | **Drizzle**                                                  | Lightweight, excellent serverless cold-start profile, edge-friendly, tiny footprint — ideal for zero-cost | **Prisma** (richer DX, heavier), Kysely   |
+| Database               | **PostgreSQL + PostGIS (Neon/Supabase free)**                | Relational + geo + JSONB + full-text in one engine; free tiers with pooling + PITR                        | RDS/Aurora (paid, later)                  |
+| Auth                   | **Auth.js**                                                  | Free, self-hosted sessions, OAuth support, no external dependency                                         | Clerk (free tier, external), Lucia        |
+| Validation             | **Zod**                                                      | One schema reused across API + forms; strong inference                                                    | Valibot (smaller), Yup                    |
+| HTTP + parse           | **Native `fetch` (undici) + Cheerio**                        | Fast, dependency-light HTML analysis with no headless browser                                             | JSDOM (heavier)                           |
+| Business Discovery     | **Overpass API + Nominatim (OpenStreetMap) + Leaflet**       | Free, keyless, ODbL-licensed data — no billing, no quota, no key management (v1.1.0)                      | Google Places/Maps JS (original, retired) |
+| AI                     | **Provider adapter (OpenAI/Gemini/Claude) or Vercel AI SDK** | Provider-agnostic, structured output, streaming                                                           | Direct SDKs, LangChain (heavier)          |
+| Encryption             | **Node `crypto` (AES-256-GCM)**                              | Built-in, no dependency, standard envelope encryption for user keys                                       | libsodium                                 |
+| Rate limiting          | **Postgres-backed limiter**                                  | No Redis; zero-cost; sufficient at this scale                                                             | Upstash free tier (optional)              |
+| Client data/state      | **TanStack Query**                                           | SWR caching, less boilerplate                                                                             | SWR, RTK Query                            |
+| Table + virtualization | **TanStack Table + TanStack Virtual**                        | Handles large result sets performantly                                                                    | react-window, ag-grid                     |
+| Export                 | **SheetJS / streamed CSV**                                   | XLSX/CSV generation in-request, no storage                                                                | csv-stringify                             |
+| Monitoring             | **Sentry + Vercel Analytics + uptime**                       | Free tiers cover errors, Web Vitals, uptime                                                               | Grafana stack                             |
+| Testing                | **Vitest + Testing Library + Playwright**                    | Fast unit + integration + e2e                                                                             | Jest, Cypress                             |
+| CI/CD                  | **GitHub Actions + Vercel Git**                              | Free, gated migrations, preview deploys                                                                   | —                                         |
 
 ---
 
@@ -726,8 +736,8 @@ Follow-up is implemented as a **passive `follow_up_at` date surfaced on the dash
 **Reconciled inconsistency 3 — "millions of businesses" vs "free-tier database."**
 The **schema is designed for millions** (normalized, indexed, partition-ready), while the **free tier caps actual storage**. Because On-Demand + Cache First store only what users search, real row counts stay small for a long time, and scaling up is a **non-breaking tier change** (§16). Zero-cost is the default, not a ceiling.
 
-**Reconciled inconsistency 4 — "cache every Google response" vs Google ToS caching limits.**
-Cache First is honored with **ToS-compliant TTLs**: Place IDs and geocoded coordinates stored long-term; other Place Content cached only within permitted windows; ratings/reviews/photos not warehoused. Durable product value lives in **our derived analysis + scores**, not stored Google Content (§7). Flagged for **legal review before launch**.
+**Reconciled inconsistency 4 — "cache every provider response" vs provider caching limits.**
+Originally reconciled via Google-ToS-compliant TTLs; superseded by the v1.1.0 migration (§7) to OpenStreetMap, whose ODbL license imposes no caching-duration restriction. Cache First (§6) is now unconstrained by license terms — TTLs remain as freshness defaults, not compliance requirements. Durable product value still lives in **our derived analysis + scores**, not warehoused third-party content.
 
 **Reconciled inconsistency 5 — "zero-cost" vs Vercel Hobby's non-commercial terms.**
 The one honest cost is that **commercial launch requires Vercel Pro** (Hobby is for non-commercial use). Development, MVP, and demos run at zero cost; production commercial use moves to Pro with **no architectural change** (§18). This is surfaced rather than hidden.
@@ -738,7 +748,7 @@ The one honest cost is that **commercial launch requires Vercel Pro** (Hobby is 
 
 - _Architecture (§2):_ single Next.js app, one Postgres, no paid infra. ✔
 - _Database/Cache (§5–6):_ Postgres-only cache, no Redis, lazy read-through refresh. ✔
-- _Google (§7):_ cache-first, field masks, manual discovery — minimizes calls; user's keys. ✔
+- _Business Discovery provider (§7):_ cache-first, manual discovery — minimizes calls; free and keyless post-v1.1.0, so there's no user key or quota to manage at all. ✔
 - _Analysis (§9):_ HTTP-only, no headless browser — free and within function limits. ✔
 - _AI (§11):_ optional, user-funded, cached to avoid re-billing. ✔
 - _Rate limiting (§12–13):_ Postgres-backed, no Redis. ✔
@@ -747,12 +757,12 @@ The one honest cost is that **commercial launch requires Vercel Pro** (Hobby is 
 **Residual weaknesses to watch during build.**
 
 - _Serverless time budget_ is the tightest real constraint — keep analysis and AI per-request work small; stream AI; never introduce a hidden long-running step.
-- _No fixed egress IP_ weakens Google server-key restriction; rely on API-scoping and revisit if a static IP becomes affordable.
+- ~~_No fixed egress IP_ weakens Google server-key restriction~~ — moot since v1.1.0: Business Discovery has no server key to restrict.
 - _SPA analysis fidelity_ is limited without JS rendering; communicate confidence and keep headless rendering out of scope for cost.
 - _Prompt injection and SSRF_ are the two security edges that deserve continuous attention because both ingest untrusted external content.
 - _Free-tier auto-suspend_ (DB cold starts) can add first-request latency; the pooler and RSC caching mitigate perceived impact.
 
-**Verdict.** Architecture v2 is internally consistent, faithful to all five core principles, and implementation-ready. Its strengths are radical simplicity (no asynchronous plane), a genuine Cache-First cost model, and a design that scales up by changing plans rather than rewriting. Its honest costs and risks — the Vercel commercial-plan requirement, serverless time limits, and Google/legal compliance — are surfaced with concrete mitigations. A senior team can build the entire application, sprint by sprint, from this document.
+**Verdict.** Architecture v2 is internally consistent, faithful to all five core principles, and implementation-ready. Its strengths are radical simplicity (no asynchronous plane), a genuine Cache-First cost model, and a design that scales up by changing plans rather than rewriting — the last of these borne out directly by the v1.1.0 provider migration (§7), which replaced Google Maps Platform with free OpenStreetMap-backed services by changing exactly one anti-corruption-layer folder (`modules/geo`) and nothing else. Its remaining honest costs and risks — the Vercel commercial-plan requirement and serverless time limits — are surfaced with concrete mitigations.
 
 ---
 

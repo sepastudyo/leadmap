@@ -9,7 +9,6 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { idParamSchema } from "@/lib/validation";
 import {
   BusinessNotFoundError,
-  GoogleApiKeyMissingError,
   getOrRefreshPlaceDetails,
 } from "@/modules/intelligence";
 
@@ -49,9 +48,9 @@ export async function POST(
   }
 
   // architecture.md §6.4 "respects rate limits" — a force-refresh always
-  // spends real Google quota (never a cache hit by definition), so this
-  // is checked before the call, the same pattern Sprint 6 Phase 6.1
-  // established for the AI routes.
+  // calls the (free, but shared and rate-policy-bound) search provider
+  // rather than serving from cache, so this is checked before the call,
+  // the same pattern Sprint 6 Phase 6.1 established for the AI routes.
   const rateLimit = await checkRateLimit(userId, RATE_LIMIT_BUCKET, {
     limit: BUSINESS_REFRESH_RATE_LIMIT_MAX,
     windowMs: BUSINESS_REFRESH_RATE_LIMIT_WINDOW_MS,
@@ -84,7 +83,7 @@ export async function POST(
   }
 
   try {
-    const data = await getOrRefreshPlaceDetails(userId, parsedParams.data.id, {
+    const data = await getOrRefreshPlaceDetails(parsedParams.data.id, {
       force: true,
     });
     return jsonData(data, requestId, { headers: rateLimitHeaders });
@@ -93,15 +92,6 @@ export async function POST(
       return jsonError("BUSINESS_NOT_FOUND", error.message, requestId, 404, {
         headers: rateLimitHeaders,
       });
-    }
-    if (error instanceof GoogleApiKeyMissingError) {
-      return jsonError(
-        "GOOGLE_API_KEY_MISSING",
-        error.message,
-        requestId,
-        422,
-        { headers: rateLimitHeaders },
-      );
     }
     throw error;
   }

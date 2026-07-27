@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
@@ -43,8 +42,8 @@ function getBusinessId(business: DiscoveryBusiness): string {
 }
 
 // `ssr: false` + dynamic import is the actual lazy-load: neither this
-// component's code nor the Google Maps JS bundle it pulls in downloads
-// until `hasOpenedMap` (below) causes it to mount for the first time.
+// component's code nor the Leaflet bundle it pulls in downloads until
+// `hasOpenedMap` (below) causes it to mount for the first time.
 const MapView = dynamic(() => import("./map-view"), {
   ssr: false,
   loading: () => (
@@ -123,7 +122,6 @@ export function DiscoveryView() {
   const [nextCursor, setNextCursor] = React.useState<number | null>(null);
   const [totalCached, setTotalCached] = React.useState(0);
   const [status, setStatus] = React.useState<Status>("idle");
-  const [errorCode, setErrorCode] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const [sorting, setSorting] = React.useState<SortingState>([]);
@@ -137,7 +135,6 @@ export function DiscoveryView() {
   const runSearch = React.useCallback(
     async (searchForm: FormState, targetCursor: number) => {
       setStatus("loading");
-      setErrorCode(null);
       setErrorMessage(null);
 
       try {
@@ -160,7 +157,6 @@ export function DiscoveryView() {
         if (!response.ok) {
           const body = json as ErrorResponseBody | null;
           setStatus("error");
-          setErrorCode(body?.error?.code ?? null);
           setErrorMessage(body?.error?.message ?? "Search failed. Try again.");
           return;
         }
@@ -325,16 +321,6 @@ export function DiscoveryView() {
         </Button>
       </form>
 
-      {status === "error" && errorCode === "GOOGLE_API_KEY_MISSING" && (
-        <p className="text-destructive text-sm">
-          {errorMessage}{" "}
-          <Link href="/settings" className="underline underline-offset-4">
-            Go to Settings
-          </Link>
-          .
-        </p>
-      )}
-
       {submittedForm ? (
         <div className="flex flex-1 flex-col gap-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
@@ -440,11 +426,7 @@ export function DiscoveryView() {
               sorting={sorting}
               onSortingChange={setSorting}
               isLoading={isLoading}
-              error={
-                status === "error" && errorCode !== "GOOGLE_API_KEY_MISSING"
-                  ? errorMessage
-                  : null
-              }
+              error={status === "error" ? errorMessage : null}
               emptyMessage={
                 isFiltered
                   ? "No businesses match these filters."

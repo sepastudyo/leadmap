@@ -8,7 +8,7 @@ import type { NormalizedSearchInput } from "./normalize";
 
 /**
  * `search_cache` repository — the Cache-First read-through
- * (architecture.md §6.2, §6.3), page-token pagination (§8 "Google page
+ * (architecture.md §6.2, §6.3), page-token pagination (§8 "provider page
  * tokens ... stored on the search_cache row so 'load more' can extend
  * a cached search without restarting it"), and opportunistic purge
  * (§6.4). Every function takes an optional `dbClient`, defaulting to
@@ -109,7 +109,7 @@ export async function upsertSearchCache(
 /**
  * Extends an existing cache row with one more page of Places Search
  * results (architecture.md §8). Appends to `place_ids` — de-duplicated,
- * since Google's pagination isn't guaranteed disjoint from what's
+ * since the provider's pagination isn't guaranteed disjoint from what's
  * already cached — refreshes `provider_page_tokens` with whatever
  * comes next (or `null` once exhausted), and bumps `expires_at`/
  * `result_count` to reflect the newly-extended set.

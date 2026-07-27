@@ -4,12 +4,12 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { env } from "@/config/env";
 
 /**
- * AES-256-GCM envelope encryption for user-provided secrets (Google/AI
- * API keys) using a server-side master key from the environment
- * (architecture.md §13.4). Each call to `encrypt` uses a fresh random
- * IV; the returned envelope is `iv || authTag || ciphertext`, matching
- * the `bytea` shape of `user_settings.google_api_key_enc` /
- * `ai_api_key_enc` (db/schema/user-settings.ts, architecture.md §5.2).
+ * AES-256-GCM envelope encryption for the user-provided AI API key
+ * using a server-side master key from the environment (architecture.md
+ * §13.4). Each call to `encrypt` uses a fresh random IV; the returned
+ * envelope is `iv || authTag || ciphertext`, matching the `bytea` shape
+ * of `user_settings.ai_api_key_enc` (db/schema/user-settings.ts,
+ * architecture.md §5.2).
  */
 
 const ALGORITHM = "aes-256-gcm";

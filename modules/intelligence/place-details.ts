@@ -5,8 +5,7 @@ import {
   getBusinessById,
   updatePlaceDetailsForBusiness,
 } from "@/modules/discovery";
-import { getPlaceDetails } from "@/modules/google";
-import { getDecryptedKeys } from "@/modules/settings";
+import { getPlaceDetails } from "@/modules/geo";
 
 /**
  * Place Details enrichment (architecture.md §3 Business Intelligence:
@@ -22,24 +21,18 @@ import { getDecryptedKeys } from "@/modules/settings";
  * `businesses` table `modules/discovery` already populates ("cache
  * integration with the existing discovery flow" — same table, same
  * repository conventions, same DbClient pattern). Auto-enriching every
- * search result would call Place Details for up to
+ * search result would call Business Details for up to
  * `SEARCH_PAGE_SIZE_MAX` businesses per search, which contradicts §7.3
- * ("the user's Google quota is spent only on genuinely new searches")
- * and §3's own framing of enrichment as a per-business, on-demand
- * action, not a bulk one.
+ * ("the user's quota is spent only on genuinely new searches" — no
+ * longer a *billing* quota after the OpenStreetMap migration, but still
+ * a shared public service worth not hammering) and §3's own framing of
+ * enrichment as a per-business, on-demand action, not a bulk one.
  */
 
 export class BusinessNotFoundError extends Error {
   constructor() {
     super("Business not found.");
     this.name = "BusinessNotFoundError";
-  }
-}
-
-export class GoogleApiKeyMissingError extends Error {
-  constructor() {
-    super("Save a Google API key in Settings before enriching a business.");
-    this.name = "GoogleApiKeyMissingError";
   }
 }
 
@@ -58,12 +51,14 @@ export type RefreshOptions = {
 };
 
 /**
- * §6.2 read-through: fresh row → serve from Postgres, no Google call;
- * stale/missing → call Google within this request, persist, return the
- * updated row.
+ * §6.2 read-through: fresh row → serve from Postgres, no provider call;
+ * stale/missing → re-fetch within this request, persist, return the
+ * updated row. No provider API key is required (`modules/geo`, migrated
+ * from Google Maps Platform to free OpenStreetMap-backed services) —
+ * this function no longer needs the calling user's identity at all,
+ * unlike its Sprint 3 original.
  */
 export async function getOrRefreshPlaceDetails(
-  userId: string,
   businessId: string,
   options?: RefreshOptions,
 ) {
@@ -72,13 +67,7 @@ export async function getOrRefreshPlaceDetails(
 
   if (!options?.force && isFresh(business.detailsExpiresAt)) return business;
 
-  const settings = await getDecryptedKeys(userId);
-  if (!settings) throw new GoogleApiKeyMissingError();
-
-  const details = await getPlaceDetails(
-    business.googlePlaceId,
-    settings.googleApiKey,
-  );
+  const details = await getPlaceDetails(business.googlePlaceId);
 
   const now = new Date();
   const detailsExpiresAt = new Date(

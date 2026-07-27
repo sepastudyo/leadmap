@@ -6,7 +6,7 @@ import { db, type DbClient } from "@/lib/db";
 /**
  * Idempotency/concurrency guard for a search signature (architecture.md
  * §12.4 "Idempotency-Key on paid actions ... so client retries don't
- * double-spend the user's Google/AI quota"). architecture.md §5.2
+ * double-spend the user's AI quota"). architecture.md §5.2
  * defines no idempotency-key table, so this doesn't add one — instead
  * it leans on two things that are already architecture-native:
  *
@@ -17,8 +17,9 @@ import { db, type DbClient } from "@/lib/db";
  * 2. A Postgres transaction-scoped advisory lock
  *    (`pg_advisory_xact_lock`) keyed on that signature serializes
  *    concurrent cache-miss requests for the *same* search, so only one
- *    of them actually calls Google — the same "no Redis, Postgres does
- *    it" posture architecture.md already uses for rate limiting (§12.4).
+ *    of them actually calls the search provider — the same "no Redis,
+ *    Postgres does it" posture architecture.md already uses for rate
+ *    limiting (§12.4).
  *
  * `hashtextextended` (built-in since PG 11) turns the signature into
  * the bigint `pg_advisory_xact_lock` takes; the lock is released

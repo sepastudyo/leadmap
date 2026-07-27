@@ -5,16 +5,17 @@ import { updateSettingsSchema } from "@/lib/validation";
 import {
   AiApiKeyInvalidError,
   AiApiKeyRequiredError,
-  GoogleApiKeyRequiredError,
   getMaskedSettings,
   saveSettings,
 } from "@/modules/settings";
 
 /**
  * `GET/PATCH /api/settings` (architecture.md §12.5) — read/update the
- * signed-in user's Google/AI keys + provider. Response envelope per
- * architecture.md §12.2. Keys are never returned in the response body;
- * only a masked presence/provider summary is (architecture.md §13.4).
+ * signed-in user's AI key + provider (no Google key — Business
+ * Discovery is keyless since the OpenStreetMap migration,
+ * `modules/geo`). Response envelope per architecture.md §12.2. The key
+ * is never returned in the response body; only a masked
+ * presence/provider summary is (architecture.md §13.4).
  */
 
 function requestIp(request: Request): string {
@@ -57,7 +58,6 @@ export async function PATCH(request: Request) {
     return jsonData(data, requestId);
   } catch (error) {
     if (
-      error instanceof GoogleApiKeyRequiredError ||
       error instanceof AiApiKeyRequiredError ||
       error instanceof AiApiKeyInvalidError
     ) {

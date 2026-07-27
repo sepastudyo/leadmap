@@ -37,7 +37,7 @@ async function postRefresh(path: string): Promise<PostResult> {
  * (which looks the business up itself) actually sees — then
  * `router.refresh()` to re-render the page's Server Component with
  * whatever changed. No client-side state to reconcile: every value this
- * page shows (Google Signals, Analysis Summary) already comes from the
+ * page shows (Business signals, Analysis Summary) already comes from the
  * RSC's own read, which `router.refresh()` simply re-runs.
  */
 export function RefreshPanel({ businessId }: RefreshPanelProps) {

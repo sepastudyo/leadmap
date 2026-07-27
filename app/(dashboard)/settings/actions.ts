@@ -8,7 +8,6 @@ import { updateSettingsSchema } from "@/lib/validation";
 import {
   AiApiKeyInvalidError,
   AiApiKeyRequiredError,
-  GoogleApiKeyRequiredError,
   saveSettings,
 } from "@/modules/settings";
 
@@ -25,7 +24,6 @@ export async function updateSettings(formData: FormData) {
   }
 
   const parsed = updateSettingsSchema.safeParse({
-    googleApiKey: formData.get("googleApiKey") ?? "",
     aiProvider: formData.get("aiProvider") ?? "",
     aiApiKey: formData.get("aiApiKey") ?? "",
   });
@@ -39,9 +37,6 @@ export async function updateSettings(formData: FormData) {
       ip: requestIp(await headers()),
     });
   } catch (error) {
-    if (error instanceof GoogleApiKeyRequiredError) {
-      redirect("/settings?error=GoogleApiKeyRequired");
-    }
     if (error instanceof AiApiKeyRequiredError) {
       redirect("/settings?error=AiApiKeyRequired");
     }
