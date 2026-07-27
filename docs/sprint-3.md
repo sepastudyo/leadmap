@@ -838,7 +838,7 @@ this work.
       this pass too, since the Business Detail Page needed to read a
       persisted score back typed). Migration
       `0006_sprint3_website_analyses.sql` generated cleanly. `analysis
-    _history` is genuinely optional/append-only per §5.2's own
+_history` is genuinely optional/append-only per §5.2's own
       description — populated only when `persistAnalysis` overwrites an
       existing row, never on first analysis.
 - [x] `modules/intelligence/analysis/types.ts` (new): `AcquisitionResult`
@@ -927,7 +927,7 @@ correctly report `status: "ok"`.
       — the actual scoring algorithm — are untouched, consistent with
       every prior phase's "preserve the current scoring engine."
 - [x] `components/business/{lead-score-card,google-signals,analysis-
-    summary}.tsx` — presentational Server Components (no
+summary}.tsx` — presentational Server Components (no
       interactivity, so no `"use client"`) rendering the explainable
       breakdown, Google Business signals (rating, review count,
       category, presence — the exact four Sprint 3's Deliverables list
