@@ -40,7 +40,11 @@ function normalizeText(value: string | undefined): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-function resolveUrl(
+/** Exported for reuse by other stages that need the same relative-URL
+ * resolution against `finalUrl` (e.g. `social-links.ts`'s outbound
+ * profile links) — "reuse the existing metadata extraction" rather than
+ * a second implementation of the same one-liner. */
+export function resolveUrl(
   value: string | undefined,
   finalUrl: string,
 ): string | null {

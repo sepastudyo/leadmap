@@ -21,6 +21,7 @@ import {
   type SitemapEvaluation,
   type SitemapResult,
 } from "./sitemap";
+import { extractSocialLinks, type SocialLinksResult } from "./social-links";
 import {
   extractOpenGraph,
   extractTwitterCard,
@@ -41,16 +42,16 @@ import { detectTracking, type TrackingDetectionResult } from "./tracking";
  * Website Analysis pipeline (architecture.md §9). Sprint 3 Phase 3.2
  * built [1 Acquire] (`acquireWebsite`, below — unchanged, reused, not
  * duplicated). Phase 3.3 added [2 Parse] and Metadata/SEO/Schema-OG
- * evaluation. Phase 3.4 adds the remaining named stages: [11 SSL]
- * (extended with security header analysis), [5 CMS], Tracking,
- * Technology, and full [9 robots.txt]/[10 sitemap.xml] directive/
- * staleness evaluation (retrieval for both shipped in Phase 3.2 — this
- * phase only adds the pure evaluation over what's already fetched).
- * Every stage below still runs through the one `acquireWebsite` fetch;
- * SSL analysis is the only stage needing a *new* connection (a
- * certificate handshake `fetch` can't expose), and even that reuses
- * `finalUrl` and the same SSRF-guarded DNS resolution rather than
- * re-fetching the page.
+ * evaluation. Phase 3.4 added [11 SSL] (extended with security header
+ * analysis), [5 CMS], Tracking, Technology, and full [9 robots.txt]/
+ * [10 sitemap.xml] directive/staleness evaluation (retrieval for both
+ * shipped in Phase 3.2). The post-Phase-3.5 gap-closure pass adds the
+ * last remaining named stage, [7 Social] (`social-links.ts`) — every
+ * §9.1 evaluation stage is now implemented. Every stage below still
+ * runs through the one `acquireWebsite` fetch; SSL analysis is the only
+ * stage needing a *new* connection (a certificate handshake `fetch`
+ * can't expose), and even that reuses `finalUrl` and the same
+ * SSRF-guarded DNS resolution rather than re-fetching the page.
  */
 
 export * from "./cms";
@@ -61,6 +62,7 @@ export * from "./parse";
 export * from "./robots";
 export * from "./seo";
 export * from "./sitemap";
+export * from "./social-links";
 export * from "./social-meta";
 export * from "./ssl";
 export * from "./ssrf-guard";
@@ -112,6 +114,7 @@ export type PageAnalysis = {
   technology: TechnologyDetectionResult;
   robotsEvaluation: RobotsEvaluation;
   sitemapEvaluation: SitemapEvaluation;
+  social: SocialLinksResult;
 };
 
 /**
@@ -157,6 +160,7 @@ export async function analyzePage(url: string): Promise<PageAnalysis> {
   const technology = detectTechnologies($);
   const robotsEvaluation = evaluateRobotsTxt(acquisition.robots);
   const sitemapEvaluation = evaluateSitemap(acquisition.sitemap);
+  const social = extractSocialLinks($, acquisition.page.finalUrl);
 
   const ssl = await sslPromise;
 
@@ -173,5 +177,6 @@ export async function analyzePage(url: string): Promise<PageAnalysis> {
     technology,
     robotsEvaluation,
     sitemapEvaluation,
+    social,
   };
 }

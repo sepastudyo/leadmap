@@ -14,17 +14,15 @@ import type { ScoringExpression } from "@/lib/validation/scoring";
  * Built from exactly the fields architecture.md §10.1 names as its own
  * scoring-context example — `has_ssl, has_website, cms, has_ga4,
  * has_meta_pixel, seo.title_ok, seo.h1_ok, has_sitemap, schema_present,
- * google.rating, google.review_count` — one rule per field, nothing
- * invented beyond them ("no heuristics outside architecture.md"). The
- * one named example field *not* covered is `social.count`: the Website
- * Analyzer's [7 Social] stage doesn't exist yet (see
- * `modules/intelligence/scoring/context.ts`'s comment and
- * docs/sprint-3.md), so there's no real signal to write a rule against.
- * `max_points` are chosen to sum to exactly 100 — a clean, legible
- * default where a business matching every rule scores 100 before
- * `computeLeadScore`'s proportional normalization even has to do
- * anything — but nothing about the engine *requires* that; normalize()
- * stays correct however future rules change this sum.
+ * social.count, google.rating, google.review_count` — one rule per
+ * field, nothing invented beyond them ("no heuristics outside
+ * architecture.md"). `social_presence` (added post-Phase-3.5, once the
+ * Website Analyzer's [7 Social] stage closed that gap — see
+ * docs/sprint-3.md) was the last field to gain a rule; every other rule
+ * had its `weight`/`max_points` reduced by 1 at the same time so the
+ * ruleset's total stays exactly 100 — still just a legible default,
+ * never a requirement `computeLeadScore`'s proportional normalization
+ * depends on.
  */
 
 export type SeedRule = {
@@ -50,8 +48,8 @@ export const DEFAULT_RULES: SeedRule[] = [
     description: "Site is served over HTTPS",
     category: "security",
     expression: { "==": [{ var: "has_ssl" }, true] },
-    weight: 10,
-    maxPoints: 10,
+    weight: 9,
+    maxPoints: 9,
   },
   {
     key: "has_website",
@@ -68,8 +66,8 @@ export const DEFAULT_RULES: SeedRule[] = [
     description: "Site runs on a recognized CMS platform",
     category: "technology",
     expression: { "!=": [{ var: "cms" }, null] },
-    weight: 5,
-    maxPoints: 5,
+    weight: 4,
+    maxPoints: 4,
   },
   {
     key: "has_ga4",
@@ -77,8 +75,8 @@ export const DEFAULT_RULES: SeedRule[] = [
     description: "Site has Google Analytics (GA4) installed",
     category: "tracking",
     expression: { "==": [{ var: "has_ga4" }, true] },
-    weight: 8,
-    maxPoints: 8,
+    weight: 7,
+    maxPoints: 7,
   },
   {
     key: "has_meta_pixel",
@@ -86,8 +84,8 @@ export const DEFAULT_RULES: SeedRule[] = [
     description: "Site has the Meta Pixel installed",
     category: "tracking",
     expression: { "==": [{ var: "has_meta_pixel" }, true] },
-    weight: 7,
-    maxPoints: 7,
+    weight: 6,
+    maxPoints: 6,
   },
   {
     key: "seo_title_ok",
@@ -95,8 +93,8 @@ export const DEFAULT_RULES: SeedRule[] = [
     description: "Title tag is present and within the recommended length",
     category: "seo",
     expression: { "==": [{ var: "seo.title_ok" }, true] },
-    weight: 10,
-    maxPoints: 10,
+    weight: 9,
+    maxPoints: 9,
   },
   {
     key: "seo_h1_ok",
@@ -104,8 +102,8 @@ export const DEFAULT_RULES: SeedRule[] = [
     description: "Page has exactly one H1 heading",
     category: "seo",
     expression: { "==": [{ var: "seo.h1_ok" }, true] },
-    weight: 8,
-    maxPoints: 8,
+    weight: 7,
+    maxPoints: 7,
   },
   {
     key: "has_sitemap",
@@ -113,8 +111,8 @@ export const DEFAULT_RULES: SeedRule[] = [
     description: "Site publishes a discoverable sitemap.xml",
     category: "seo",
     expression: { "==": [{ var: "has_sitemap" }, true] },
-    weight: 7,
-    maxPoints: 7,
+    weight: 6,
+    maxPoints: 6,
   },
   {
     key: "schema_present",
@@ -123,8 +121,17 @@ export const DEFAULT_RULES: SeedRule[] = [
       "Site includes Schema.org structured data (JSON-LD, Microdata, or RDFa)",
     category: "seo",
     expression: { "==": [{ var: "schema_present" }, true] },
-    weight: 8,
-    maxPoints: 8,
+    weight: 7,
+    maxPoints: 7,
+  },
+  {
+    key: "social_presence",
+    name: "Has a social media presence",
+    description: "Site links to at least one major social platform",
+    category: "social",
+    expression: { ">=": [{ var: "social.count" }, 1] },
+    weight: 10,
+    maxPoints: 10,
   },
   {
     key: "google_rating_strong",
@@ -132,8 +139,8 @@ export const DEFAULT_RULES: SeedRule[] = [
     description: "Google rating is 4.0 or higher",
     category: "reputation",
     expression: { ">=": [{ var: "google.rating" }, 4] },
-    weight: 15,
-    maxPoints: 15,
+    weight: 14,
+    maxPoints: 14,
   },
   {
     key: "google_reviews_established",
@@ -141,8 +148,8 @@ export const DEFAULT_RULES: SeedRule[] = [
     description: "Has 10 or more Google reviews",
     category: "reputation",
     expression: { ">=": [{ var: "google.review_count" }, 10] },
-    weight: 17,
-    maxPoints: 17,
+    weight: 16,
+    maxPoints: 16,
   },
 ];
 

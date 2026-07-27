@@ -574,7 +574,7 @@ surface later" split every prior Sprint 3 phase has followed.
       `scoring_rulesets`, `lead_scores` — added exactly matching their
       documented columns (`db/schema/scoring-rules.ts`,
       `scoring-rulesets.ts`, `lead-scores.ts`), plus the `lead_scores
-    (total desc)` index §5.4 specifies. Migration
+(total desc)` index §5.4 specifies. Migration
       `0005_sprint3_lead_scoring.sql` generated cleanly via
       `drizzle-kit generate` (no manual fixes needed this time — unlike
       Sprint 2's PostGIS column, nothing here uses a custom type).
@@ -600,8 +600,8 @@ surface later" split every prior Sprint 3 phase has followed.
 - [x] Scoring context: `modules/intelligence/scoring/context.ts`
       (`buildScoringContext`) builds §10.1's own named example context
       — `has_ssl, has_website, cms, has_ga4, has_meta_pixel,
-    seo.title_ok, seo.h1_ok, has_sitemap, schema_present,
-    google.rating, google.review_count` — by reading directly from
+seo.title_ok, seo.h1_ok, has_sitemap, schema_present,
+google.rating, google.review_count` — by reading directly from
       Phase 3.2–3.4's already-computed `PageAnalysis` fields and the
       business row. Nothing here re-detects or re-derives anything a
       stage file already computed ("reuse every analyzer already
@@ -612,8 +612,8 @@ surface later" split every prior Sprint 3 phase has followed.
       `modules/intelligence/scoring/engine.ts` (`computeLeadScore`)
       implements §10.2's pseudocode literally — for each enabled rule
       (in `rule_keys` order), evaluate, `points = matched ?
-    min(weight, max_points) : 0`, push a `{ key, matched, points,
-    reason }` breakdown entry (`reason` is the rule's own
+min(weight, max_points) : 0`, push a `{ key, matched, points,
+reason }` breakdown entry (`reason` is the rule's own
       `description` — the field `scoring_rules` has specifically for
       this), sum, then `normalize(sum) → 0..100`. The normalization
       formula itself isn't specified beyond that goal, so this scales
@@ -704,4 +704,110 @@ ruleset's specific rules/weights are configurable data by architecture's
 own design ("new rules are added without rewriting the engine") — not
 something architecture.md specifies exhaustively — and were built using
 only the fields §10.1 itself names, with no invented heuristics.
+
+### Gap closure — Social Presence Detection ([7 Social])
+
+Closes the one gap Phase 3.5 disclosed: architecture.md §9.1's [7
+Social] stage ("Social links: outbound Facebook/Instagram/LinkedIn/X/
+TikTok/YouTube links; dedupe + validate; flag missing majors", §9.2)
+had never been implemented across Phases 3.2–3.4. All six platforms
+§9.2 names are covered — including TikTok, which this pass's own
+instructions didn't call out individually (they asked for YouTube "if
+architecture.md includes it" and were silent on TikTok), but which
+architecture.md names in the exact same sentence as the other five;
+"flag missing majors" would be incomplete if one of the six majors were
+silently excluded from detection. No other stage was touched.
+
+- [x] Facebook / Instagram / LinkedIn / X / TikTok / YouTube detection:
+      new `modules/intelligence/analysis/social-links.ts`
+      (`extractSocialLinks`) — selects every `<a href>`, resolves it to
+      an absolute URL via `metadata.ts`'s exported `resolveUrl` (reused,
+      not reimplemented — "reuse the existing metadata extraction"),
+      and classifies it by hostname against each platform's known
+      domain(s) (`facebook.com`/`fb.com`/`fb.me`, `instagram.com`,
+      `linkedin.com`, `x.com`/`twitter.com`, `tiktok.com`,
+      `youtube.com`).
+- [x] Dedupe + validate (§9.2): "dedupe" — the **first** matching link
+      per platform wins; a footer and header link to the same Facebook
+      page count as one signal, not two. "Validate" — each platform has
+      an exclude-path list that disqualifies an otherwise host-matching
+      link when it's a share widget or intent link rather than a
+      genuine outbound profile (Facebook `/sharer`/`/share.php`/
+      `/dialog/`, LinkedIn `/sharing/`/`/shareArticle`, X `/intent/`/
+      `/share`, TikTok `/share/`) or, for YouTube specifically, a raw
+      video/embed link rather than a channel (`/watch`, `/embed/`,
+      `/shorts/`; `youtu.be` is excluded from the host list entirely
+      for the same reason — it's a video-shortlink domain, never a
+      channel URL).
+- [x] Normalization into the existing analyzer result: `PageAnalysis`
+      (`index.ts`) gained a `social: SocialLinksResult` field, populated
+      via `extractSocialLinks($, acquisition.page.finalUrl)` — the same
+      already-parsed `$` and already-resolved `finalUrl` every other
+      stage uses, no new fetch. Named `social` to match
+      `website_analyses.social (jsonb)`, the column architecture.md §5.2
+      already specifies for this data, even though persisting to that
+      table is still a later phase's job.
+- [x] Integration with the Lead Scoring context builder:
+      `modules/intelligence/scoring/context.ts`'s `ScoringContext`
+      regained the `social: { count: number }` field Phase 3.5
+      documented as a placeholder gap, now reading
+      `analysis?.social.platformCount ?? 0` — a real signal instead of
+      an absent one. `engine.ts` and `expression.ts` (the engine itself)
+      were **not** touched — exactly as required ("preserve the current
+      scoring engine"): the context gaining a field and the seed adding
+      a rule that reads it is the data-driven extension path
+      architecture.md §10.3 describes ("new rules are added without
+      rewriting the engine"), not an engine change.
+- [x] Seed ruleset: `db/seed/index.ts`'s `DEFAULT_RULES` gained
+      `social_presence` (`social.count >= 1`, "Site links to at least
+      one major social platform", 10 points). Every other rule's
+      `weight`/`max_points` was reduced by 1 (`has_website` excepted,
+      already at a 5-point floor) so the ruleset's total stayed exactly
+      100 — the same legible-default property Phase 3.5 established,
+      preserved rather than left to drift to 110.
+
+**Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
+and `npm run build` all pass (same one pre-existing benign warning).
+Verified live against three real sites: `github.com` (5 of 6 majors
+correctly detected — Instagram, LinkedIn, X, TikTok, YouTube profile
+links all resolved to genuine, correct profile URLs; Facebook correctly
+reported missing, since GitHub's real footer doesn't link one — a true
+negative, not a detector miss), `stripe.com` and `example.com` (both
+correctly report zero social links — neither site links to any of the
+six platforms). `missingMajors.length + platformCount === 6` held on
+every page tested, confirming the two fields stay consistent. End-to-end
+integration was verified by running `analyzePage("https://github.com")`
+through `buildScoringContext` and `computeLeadScore` together: the
+resulting context carried `social.count: 5`, and the `social_presence`
+breakdown entry correctly showed `matched: true, points: 10` — a real
+analyzer signal flowing through the (unmodified) engine into an actual
+score, not just a type-level connection. The rebalanced seed ruleset's
+`max_points` were reconfirmed to sum to exactly 100, and every one of
+the now-12 rules' expressions still parse against
+`scoringExpressionSchema`. Unverified: a live page using a TikTok
+`/share/` link or a Facebook `/sharer/` link specifically (the
+exclude-path validation logic was exercised by code review and the
+general classification logic above, but not against a page caught
+serving one of those exact patterns in this pass), and, as always,
+anything requiring a live database.
+
+**Architecture deviation check for this phase:** none. All six
+platforms architecture.md §9.2 names for [7 Social] are implemented,
+"dedupe + validate" and "flag missing majors" are both implemented as
+specified, and the Lead Score context now carries every field §10.1's
+own example names — the one gap Phase 3.5 disclosed is closed. Nothing
+else was touched: `analyzePage` issues no new fetch, no browser
+automation was introduced, no AI was introduced, and the scoring
+engine's own code (`engine.ts`, `expression.ts`) is byte-for-byte
+unchanged from Phase 3.5 — confirmed by this phase touching only
+`context.ts` (a new field) and `db/seed/index.ts` (new + rebalanced
+data) within `modules/intelligence/scoring/`.
+
+**Sprint 3 status:** every stage architecture.md §9.1's flow diagram
+names — [1 Acquire] through [11 SSL], including [7 Social] — is now
+implemented, along with the full Lead Score engine (§10). What remains
+undelivered from this sprint's original §17 scope is [12 Assemble]/
+[13 Persist] (persisting analysis results to `website_analyses`) and
+the Business Detail Page — both explicitly out of scope for every phase
+run so far and not touched here either.
 has been handled throughout this sprint.
