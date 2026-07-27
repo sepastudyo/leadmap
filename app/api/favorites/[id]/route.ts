@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { jsonData, jsonError, requireSession } from "@/lib/http";
-import { updateFavoriteSchema } from "@/lib/validation";
+import { idParamSchema, updateFavoriteSchema } from "@/lib/validation";
 import {
   FavoriteNotFoundError,
   unfavorite,
@@ -22,7 +22,16 @@ export async function PATCH(
   if (session instanceof NextResponse) return session;
   const { userId, requestId } = session;
 
-  const { id } = await params;
+  const parsedParams = idParamSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return jsonError(
+      "VALIDATION_ERROR",
+      "Invalid favorite id.",
+      requestId,
+      422,
+      { details: parsedParams.error.issues },
+    );
+  }
 
   const body = await request.json().catch(() => null);
   const parsed = updateFavoriteSchema.safeParse(body);
@@ -38,7 +47,11 @@ export async function PATCH(
   }
 
   try {
-    const data = await updateFavoriteDetails(userId, id, parsed.data);
+    const data = await updateFavoriteDetails(
+      userId,
+      parsedParams.data.id,
+      parsed.data,
+    );
     return jsonData(data, requestId);
   } catch (error) {
     if (error instanceof FavoriteNotFoundError) {
@@ -56,10 +69,19 @@ export async function DELETE(
   if (session instanceof NextResponse) return session;
   const { userId, requestId } = session;
 
-  const { id } = await params;
+  const parsedParams = idParamSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return jsonError(
+      "VALIDATION_ERROR",
+      "Invalid favorite id.",
+      requestId,
+      422,
+      { details: parsedParams.error.issues },
+    );
+  }
 
   try {
-    await unfavorite(userId, id);
+    await unfavorite(userId, parsedParams.data.id);
     // 204 per architecture.md §12.1's code list — no body to envelope.
     return new NextResponse(null, { status: 204 });
   } catch (error) {

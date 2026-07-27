@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { jsonData, jsonError, requireSession } from "@/lib/http";
-import { createNoteSchema } from "@/lib/validation";
+import { createNoteSchema, idParamSchema } from "@/lib/validation";
 import { BusinessNotFoundError, addNote } from "@/modules/crm";
 
 /**
@@ -21,7 +21,16 @@ export async function POST(
   if (session instanceof NextResponse) return session;
   const { userId, requestId } = session;
 
-  const { id: businessId } = await params;
+  const parsedParams = idParamSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return jsonError(
+      "VALIDATION_ERROR",
+      "Invalid business id.",
+      requestId,
+      422,
+      { details: parsedParams.error.issues },
+    );
+  }
 
   const body = await request.json().catch(() => null);
   const parsed = createNoteSchema.safeParse(body);
@@ -39,7 +48,7 @@ export async function POST(
   }
 
   try {
-    const data = await addNote(userId, businessId, parsed.data.body);
+    const data = await addNote(userId, parsedParams.data.id, parsed.data.body);
     return jsonData(data, requestId, { status: 201 });
   } catch (error) {
     if (error instanceof BusinessNotFoundError) {

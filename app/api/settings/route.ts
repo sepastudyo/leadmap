@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { jsonData, jsonError, requireSession } from "@/lib/http";
 import { updateSettingsSchema } from "@/lib/validation";
 import {
+  AiApiKeyInvalidError,
   AiApiKeyRequiredError,
   GoogleApiKeyRequiredError,
   getMaskedSettings,
@@ -57,7 +58,8 @@ export async function PATCH(request: Request) {
   } catch (error) {
     if (
       error instanceof GoogleApiKeyRequiredError ||
-      error instanceof AiApiKeyRequiredError
+      error instanceof AiApiKeyRequiredError ||
+      error instanceof AiApiKeyInvalidError
     ) {
       return jsonError("VALIDATION_ERROR", error.message, requestId, 422);
     }

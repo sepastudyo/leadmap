@@ -138,3 +138,16 @@ export const AI_TRANSIENT_ERROR_MAX_RETRIES = 1;
 export const AI_OPENAI_MODEL = "gpt-4o-mini";
 export const AI_GEMINI_MODEL = "gemini-2.0-flash";
 export const AI_ANTHROPIC_MODEL = "claude-3-5-haiku-latest";
+
+/**
+ * Postgres-backed fixed-window rate limit for the AI routes
+ * (architecture.md §12.4 "Tighter buckets on expensive actions (search,
+ * analyze, AI)"; Sprint 6 Phase 6.1 security-hardening pass — these two
+ * routes had no rate limit at all before this). Tighter than
+ * `SEARCH_RATE_LIMIT_MAX` since a miss here calls a paid LLM provider
+ * rather than a bounded Google Places lookup; a cache hit (§11.3
+ * `ai_results`) still counts against the same bucket, matching how the
+ * search route counts idempotent-miss and cache-hit searches alike.
+ */
+export const AI_RATE_LIMIT_MAX = 10;
+export const AI_RATE_LIMIT_WINDOW_MS = 60_000;

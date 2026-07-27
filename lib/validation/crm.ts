@@ -13,6 +13,22 @@ export const createFavoriteSchema = z.object({
 });
 export type CreateFavoriteInput = z.infer<typeof createFavoriteSchema>;
 
+/**
+ * Path-param validation for every `/{id}`-shaped CRM route
+ * (`/api/favorites/{id}`, `/api/notes/{id}`, `/api/businesses/{id}/notes`)
+ * — architecture.md §13.3 "Zod at every boundary." Sprint 6 Phase 6.2:
+ * these routes previously passed the path param straight to a `uuid`
+ * column unvalidated, so a malformed id (not a well-formed UUID, just
+ * absent/nonexistent) hit a raw Postgres cast error (`invalid input
+ * syntax for type uuid`) instead of a clean 422 — the same gap
+ * `lib/validation/ai.ts`'s `aiAuditParamsSchema` already called out and
+ * avoided for the AI routes.
+ */
+export const idParamSchema = z.object({
+  id: z.uuid(),
+});
+export type IdParam = z.infer<typeof idParamSchema>;
+
 export const listFavoritesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
