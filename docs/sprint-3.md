@@ -367,7 +367,7 @@ without duplicating any parser or fetch logic.
       space-separated multi-value handling and normalization as
       Microdata. RDFa also permits bare vocab-relative terms (e.g.
       `typeof="LocalBusiness"` alongside a page-level `vocab="
-      https://schema.org/"` attribute, rather than a full URI) —
+  https://schema.org/"` attribute, rather than a full URI) —
       `lastPathSegment` handles this by falling back to the raw token
       untouched whenever it fails to parse as a URL, without needing to
       resolve `vocab`/`prefix` context.
@@ -416,3 +416,147 @@ Microdata already cover), and §9.2's bullets read as representative
 examples rather than an exhaustive, closed field list throughout this
 sprint. Treated as an elaboration explicitly requested by this pass's
 instructions, not a deviation. Nothing else was touched.
+
+### Phase 3.4 — SSL, CMS, tracking, technology, robots/sitemap evaluation
+
+The remaining named stages from architecture.md §9.1/§9.2 not yet
+built: [11 SSL], [5 CMS], Tracking, and full [9 robots.txt]/[10
+sitemap.xml] directive/staleness evaluation (retrieval for both shipped
+in Phase 3.2 — this phase adds the pure evaluation over what's already
+fetched). Every new stage runs through the one `acquireWebsite` fetch
+from Phase 3.2 — no route, no database change, same "foundation
+already exists, only evaluation is new" shape as Phase 3.3.
+
+- [x] SSL analysis / HTTPS detection / certificate expiration analysis:
+      `ssl.ts` (`analyzeSsl`) — [11 SSL] (§9.2 "HTTPS present,
+      certificate validity/expiry/issuer"). `fetch`/`undici` don't
+      expose the peer certificate through their public API, so this
+      needed a genuinely new connection — a dedicated `tls.connect`
+      handshake (no HTTP request sent, socket destroyed immediately
+      after) against the same host [1 Acquire] already resolved
+      (`finalUrl`, post-redirect). This is **not** a duplicate fetch in
+      the sense the phase instructions rule out (no second GET, no
+      second body read) — it's the one new capability §9.2's SSL bullet
+      requires that no existing fetch exposes. Critically, it reuses
+      `safeLookup` (Phase 3.2's SSRF-guarded DNS resolution) via `tls.connect`'s
+      own `lookup` option, so this new connection carries the exact
+      same P0 SSRF protection (architecture.md §13.5) as every other
+      analyzer fetch, not a separately-implemented, potentially weaker
+      check. `rejectUnauthorized: false` lets the handshake complete
+      even for self-signed/expired/mismatched certs — the point of this
+      stage is to _report_ on a bad certificate, not refuse to look at
+      one — with trust surfaced separately via `isValid`/
+      `authorizationError` (`tls.TLSSocket#authorized`). `httpsPresent`
+      itself is just `finalUrl`'s protocol — cheap, no connection
+      needed for that half.
+- [x] Security header analysis: also in `ssl.ts`, purely over
+      `acquisition.page.headers` (already captured — no new fetch).
+      Checks presence of the six most common response-level security
+      headers (`Strict-Transport-Security`, `Content-Security-Policy`,
+      `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`,
+      `Permissions-Policy`). Not itself named in §9.2's SSL bullet — see
+      the deviation check below.
+- [x] robots.txt evaluation: `robots.ts` gained `evaluateRobotsTxt` —
+      [9 robots.txt]'s "directives" (§9.2), the piece Phase 3.2's
+      `fetchRobotsTxt` deliberately deferred. A minimal but real
+      `User-agent`/`Disallow`/`Allow` group parser (not a fully
+      spec-compliant robots.txt engine — no wildcard/`$`-anchor path
+      matching) plus a `disallowsAll` signal (a `*`-covering group with
+      `Disallow: /`). Pure function over the already-fetched body — no
+      new fetch.
+- [x] sitemap.xml evaluation: `sitemap.ts` gained `evaluateSitemap` —
+      [10 sitemap.xml]'s "URL count, staleness" (§9.2), the piece Phase
+      3.2's `discoverSitemap` deliberately deferred. Parses the
+      already-fetched body via a new `parseXml` export on `parse.ts`
+      (Cheerio in `xmlMode`, alongside the existing HTML-mode
+      `parseHtml` — same one wrapper point, not a second parsing
+      dependency). Detects `<sitemapindex>` vs. a plain `<urlset>`,
+      counts `<url>`/`<sitemap>` entries accordingly, and reports the
+      most recent `<lastmod>` found anywhere plus days-since as a
+      staleness signal.
+- [x] CMS detection: new `cms.ts` (`detectCms`) — [5 CMS] (§9.2 "via
+      `meta[name=generator]`, server/`x-powered-by` headers, and known
+      asset-path/JS fingerprints"), implemented exactly that way for
+      seven platforms (WordPress, Shopify, Wix, Squarespace, Webflow,
+      Drupal, Joomla), each returning its matched evidence rather than
+      just a boolean.
+- [x] Analytics/tracking detection: new `tracking.ts` (`detectTracking`)
+      — Tracking (§9.2 "GA4, GTM, Meta Pixel, LinkedIn Insight, Hotjar
+      ... via script src"), via script `src` patterns plus inline
+      script content (needed for tools that self-register via an inline
+      snippet — GTM containers, Meta Pixel's `fbq('init', ...)` call —
+      rather than only an external file).
+- [x] Technology detection: new `technology.ts` (`detectTechnologies`)
+      — jQuery/React/Next.js/Vue/Angular/Bootstrap/Tailwind, via the
+      same asset-path technique plus Cheerio DOM-marker selectors
+      (`[ng-version]`, `[data-reactroot]`, `#__next`, ...). Not itself
+      named in §9.2 — see the deviation check below.
+- [x] Shared signal extraction: new `page-signals.ts`
+      (`collectAssetUrls`, `collectInlineScripts`) — CMS, Tracking, and
+      Technology detection all need "every script/link/img src or href"
+      and/or "every inline script's text"; factored out once rather
+      than each of the three new stage files re-implementing the same
+      Cheerio selector loop.
+- [x] Orchestration: `index.ts`'s `analyzePage` wires in all six new
+      outputs (`ssl`, `cms`, `tracking`, `technology`,
+      `robotsEvaluation`, `sitemapEvaluation`). `analyzeSsl` — the only
+      stage in the whole pipeline doing new network I/O — is started
+      immediately after acquisition and awaited last, so its round trip
+      overlaps with the synchronous evaluation stages instead of adding
+      to the pipeline's latency serially.
+
+**Deliberately not in Phase 3.4** (later Sprint 3 phases, per
+instruction): Lead Scoring, AI, Business Detail Page, CRM, Exports. No
+browser automation anywhere in this phase or its dependency tree — the
+new TLS work is a raw certificate handshake (`node:tls`), not a
+browser, and sends no HTTP request of its own.
+
+**Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
+and `npm run build` all pass (same one pre-existing benign warning).
+Verified live against five real sites, not just typecheck:
+`example.com`/`github.com` (baseline SSL/security-header/robots/sitemap
+sanity), `wordpress.org` (WordPress correctly detected via all three
+signal types — generator meta, `/wp-content/`/`/wp-includes/` asset
+paths; GTM detected via its inline container-ID pattern; robots.txt
+directive parsing correctly produced 12 groups including three separate
+`User-agent: *` groups and dedicated AI-crawler groups
+(`GPTBot`/`ClaudeBot`/etc.) — a real, non-trivial robots.txt that
+exercises the group-boundary logic properly; sitemap correctly
+identified as a `<sitemapindex>` with 3 child sitemaps and a real
+`mostRecentLastmod` 16 days old), `www.allbirds.com` (Shopify correctly
+detected via `cdn.shopify.com`/`/cdn/shop/` asset paths; CSP/HSTS/
+X-Frame-Options/X-Content-Type-Options all correctly read as present),
+and `stripe.com` (Next.js correctly detected via **both** its asset
+path and DOM markers — `#__next` and `script#__NEXT_DATA__` — agreeing
+with each other; five of six security headers present). Certificate
+data was real and internally consistent on every HTTPS site tested
+(valid issuer, `daysUntilExpiry > 0`, `isValid: true`). SSRF protection
+on the new TLS path was separately verified against `localhost`,
+`127.0.0.1`, and the cloud-metadata address (`169.254.169.254`) — all
+three correctly returned `certificate: null` rather than completing a
+handshake, confirming `safeLookup` blocks the new connection type the
+same way it blocks `guardedFetch`'s. Unverified: a site with an
+actually-expired or self-signed certificate (`isExpired`/`isValid:
+false` paths are implemented per the Node `tls` API's documented
+behavior and code-reviewed, but not exercised against a live
+adversarial cert in this pass), a robots.txt with a true `Disallow: /`
+for `*` (`disallowsAll: true` path), and — as always — anything
+requiring a live database (still N/A; this phase doesn't touch one).
+
+**Architecture deviation check for this phase:** two requested items
+aren't literally named in architecture.md §9.2's stage-by-stage bullet
+summary — security header analysis (§9.2's SSL bullet only lists
+"HTTPS present, certificate validity/expiry/issuer") and technology
+detection (§9.2 names CMS detection and Tracking scripts as separate
+bullets, but no general "technology" bullet). Same reasoning applied to
+Twitter Card (Phase 3.3) and RDFa (the metadata gap-closure pass):
+both are explicitly named by this phase's own instructions, both use
+the exact fingerprinting technique §9.2 already prescribes for CMS
+detection (asset-path/DOM-marker matching over the parsed page, no new
+data source), and both fit inside the stages architecture.md already
+defines — security headers under [11 SSL]'s general "response-level
+security posture" concern, technology detection as a natural
+generalization of [5 CMS]'s own fingerprinting approach. Treated as
+elaborations explicitly requested by this phase's instructions, not
+deviations, consistent with how every other named-but-unlisted item
+has been handled throughout this sprint.

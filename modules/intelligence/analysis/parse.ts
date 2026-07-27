@@ -14,3 +14,13 @@ export type ParsedHtml = ReturnType<typeof cheerio.load>;
 export function parseHtml(html: string): ParsedHtml {
   return cheerio.load(html);
 }
+
+/**
+ * Same wrapper, `xmlMode: true` — for sitemap.xml (architecture.md
+ * §9.1 [10]), which is XML, not HTML. Kept in this file rather than
+ * sitemap.ts so Cheerio stays this module's one implementation detail
+ * regardless of which mode a given document needs.
+ */
+export function parseXml(xml: string): ParsedHtml {
+  return cheerio.load(xml, { xmlMode: true });
+}
