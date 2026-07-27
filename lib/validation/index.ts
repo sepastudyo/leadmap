@@ -8,4 +8,5 @@ export * from "./analysis";
 export * from "./auth";
 export * from "./discovery";
 export * from "./idempotency";
+export * from "./scoring";
 export * from "./settings";

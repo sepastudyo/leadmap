@@ -367,7 +367,7 @@ without duplicating any parser or fetch logic.
       space-separated multi-value handling and normalization as
       Microdata. RDFa also permits bare vocab-relative terms (e.g.
       `typeof="LocalBusiness"` alongside a page-level `vocab="
-  https://schema.org/"` attribute, rather than a full URI) —
+https://schema.org/"` attribute, rather than a full URI) —
       `lastPathSegment` handles this by falling back to the raw token
       untouched whenever it fails to parse as a URL, without needing to
       resolve `vocab`/`prefix` context.
@@ -559,4 +559,149 @@ security posture" concern, technology detection as a natural
 generalization of [5 CMS]'s own fingerprinting approach. Treated as
 elaborations explicitly requested by this phase's instructions, not
 deviations, consistent with how every other named-but-unlisted item
+has been handled throughout this sprint.
+
+### Phase 3.5 — Lead Score engine
+
+architecture.md §10, implemented as a data-driven, pure, deterministic
+engine over already-computed analyzer output. No route, no business
+detail page — the engine is exported and ready to be called from a
+Route Handler once one exists, matching the "foundation first, HTTP
+surface later" split every prior Sprint 3 phase has followed.
+
+- [x] Schema: three tables architecture.md §5.2 has always specified
+      but that didn't exist yet in `db/schema` — `scoring_rules`,
+      `scoring_rulesets`, `lead_scores` — added exactly matching their
+      documented columns (`db/schema/scoring-rules.ts`,
+      `scoring-rulesets.ts`, `lead-scores.ts`), plus the `lead_scores
+    (total desc)` index §5.4 specifies. Migration
+      `0005_sprint3_lead_scoring.sql` generated cleanly via
+      `drizzle-kit generate` (no manual fixes needed this time — unlike
+      Sprint 2's PostGIS column, nothing here uses a custom type).
+      `scoring_rulesets *─* scoring_rules` is deliberately **not** an
+      FK — architecture.md §5.3 documents that relationship as logical,
+      via `rule_keys`, and the schema matches that literally.
+- [x] Expression DSL + sandboxed evaluator: `lib/validation/scoring.ts`
+      (`scoringExpressionSchema`, a recursive Zod schema) is the
+      allow-list itself — a `scoring_rules.expression` value is only
+      "well-formed" if it matches one of the shapes the schema declares
+      (`var`, `==`, `!=`, `>`, `>=`, `<`, `<=`, `and`, `or`, `not`).
+      `modules/intelligence/scoring/expression.ts`
+      (`evaluateExpression`) is the matching evaluator — no `eval`, no
+      `new Function`, no dynamic property access beyond a fixed
+      dot-path `var` lookup, and it fails closed (returns `false`) on
+      anything unrecognized rather than throwing or matching. Together
+      these satisfy §10.1's "serialized, sandboxed boolean/DSL
+      condition" and §10.3's "sandboxed evaluator with an allow-listed
+      operator set (no arbitrary code execution)" as two independent,
+      reinforcing layers (schema rejects malformed shapes before they
+      reach the evaluator; the evaluator itself doesn't trust the input
+      either).
+- [x] Scoring context: `modules/intelligence/scoring/context.ts`
+      (`buildScoringContext`) builds §10.1's own named example context
+      — `has_ssl, has_website, cms, has_ga4, has_meta_pixel,
+    seo.title_ok, seo.h1_ok, has_sitemap, schema_present,
+    google.rating, google.review_count` — by reading directly from
+      Phase 3.2–3.4's already-computed `PageAnalysis` fields and the
+      business row. Nothing here re-detects or re-derives anything a
+      stage file already computed ("reuse every analyzer already
+      implemented, do not duplicate analysis logic"). One named field
+      is **not** covered: `social.count` — see the deviation check
+      below, this is disclosed, not silently dropped.
+- [x] Weighted scoring + normalization + explanation metadata:
+      `modules/intelligence/scoring/engine.ts` (`computeLeadScore`)
+      implements §10.2's pseudocode literally — for each enabled rule
+      (in `rule_keys` order), evaluate, `points = matched ?
+    min(weight, max_points) : 0`, push a `{ key, matched, points,
+    reason }` breakdown entry (`reason` is the rule's own
+      `description` — the field `scoring_rules` has specifically for
+      this), sum, then `normalize(sum) → 0..100`. The normalization
+      formula itself isn't specified beyond that goal, so this scales
+      the raw sum proportionally against the sum of `max_points` across
+      the ruleset's enabled rules, then clamps — correct regardless of
+      how many rules are enabled or whether an admin's weights happen
+      to sum to 100, not just for today's seed ruleset.
+- [x] Deterministic scoring: `computeLeadScore` and `evaluateExpression`
+      are both pure functions — no I/O, no randomness, no wall-clock
+      dependency in the score computation itself (only `computed_at`,
+      stamped by the repository at persistence time, touches the
+      clock). Verified directly (see below), not just asserted.
+- [x] Repository integration + persistence:
+      `modules/intelligence/scoring/rules-repository.ts` —
+      `getActiveRuleset` reads the active `scoring_rulesets` row,
+      resolves its `rule_keys` against `scoring_rules` (filtering to
+      `enabled: true`, preserving `rule_keys` order), and parses each
+      `expression` through `scoringExpressionSchema` before handing it
+      to the engine. `upsertLeadScore` writes `lead_scores` keyed on the
+      unique `business_id`, the same upsert-on-conflict shape
+      `businesses-repository.ts` already established. In-memory caching
+      of the active ruleset ("cached in memory; invalidated on
+      publish", §10.2) is **not** implemented — there's no publish/
+      admin surface yet for a cache to be invalidated against (out of
+      this phase's scope), so a cache here would have no correct
+      invalidation trigger. Documented as a deferred optimization, not
+      a correctness gap: `getActiveRuleset` is a direct, always-correct
+      read today.
+- [x] Seed ruleset: `db/seed/index.ts` (`seedDefaultScoringRuleset`,
+      idempotent — upserts by each table's unique key) seeds version 1
+      of the default ruleset — 11 rules, one per §10.1-named context
+      field actually available (see the `social.count` note above),
+      with `max_points` chosen to sum to exactly 100. This is the
+      `db/seed/` directory architecture.md's own file tree (§4) already
+      names for "seed data incl. default scoring ruleset."
+
+**A real gap discovered while building this phase, not by this
+phase:** architecture.md §9.1's [7 Social] stage ("Social links:
+outbound Facebook/Instagram/LinkedIn/X/TikTok/YouTube links; dedupe +
+validate; flag missing majors", §9.2) was never implemented across
+Phases 3.2, 3.3, or 3.4 — none of those phases' "Implement ONLY" lists
+named it, and none of their own deviation checks caught the omission
+(Phase 3.3's checked HTML parsing/SEO/Metadata/Schema-OG; Phase 3.4's
+checked SSL/CMS/Tracking/robots/sitemap — Social fell between both).
+It surfaced now because architecture.md §10.1's own scoring-context
+example names `social.count` as a field, and there's no analyzer output
+to source it from. Per this phase's explicit scope ("reuse every
+analyzer already implemented ... do not duplicate analysis logic"),
+building the missing Social stage is Website-Analyzer-pipeline work,
+not Lead Scoring Engine work, so it was **not** built here — the
+context/seed ruleset simply omit `social.count` rather than faking a
+signal. The engine itself needs no changes to pick it up later: once a
+Social stage exists, adding a `social_presence` rule is a `scoring_rules`
+insert, no code change (exactly the "new rules are added without
+rewriting the engine" property §10 exists to guarantee).
+
+**Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
+and `npm run build` all pass (same one pre-existing benign warning). No
+live Postgres is available in this sandbox (same limitation noted
+throughout this sprint), so `getActiveRuleset`/`upsertLeadScore`
+against a real database are unverified beyond typecheck + code review —
+but the engine itself ("pure and testable" was an explicit requirement)
+was verified directly with a standalone script, no database needed:
+every seed rule's `expression` parses against `scoringExpressionSchema`;
+`max_points` sums to exactly 100; the evaluator's `==`/`>=`/`!=`/`and`/
+`not`/dot-path `var` operators all produced correct results, including
+a `>=` comparison against a `null` context value correctly evaluating
+`false` rather than exploiting JS's `null → 0` numeric coercion to
+produce a false-positive match; a context matching every rule scored
+exactly `100` with every breakdown entry `matched: true`; a business
+with no website and no analysis scored exactly `0`; and calling
+`computeLeadScore` twice on identical inputs produced byte-identical
+results, directly confirming "deterministic scoring." Unverified: the
+`getActiveRuleset`/`upsertLeadScore` repository functions against a
+real database, and end-to-end behavior once a future phase wires this
+engine to a Route Handler.
+
+**Architecture deviation check for this phase:** one disclosed gap, not
+in this phase's own work but in what it depends on — see the
+`social.count` note above: the Website Analyzer's [7 Social] stage
+doesn't exist, so the Lead Score context is missing that one named
+example field. Everything else matches architecture.md §10 directly:
+the rule shape (`key, category, expression, weight, max_points,
+enabled, version`), the ruleset shape (versioned, ordered `rule_keys`,
+`is_active`), the evaluation pseudocode (§10.2, implemented literally),
+and the sandboxed/allow-listed expression evaluator (§10.3). The seed
+ruleset's specific rules/weights are configurable data by architecture's
+own design ("new rules are added without rewriting the engine") — not
+something architecture.md specifies exhaustively — and were built using
+only the fields §10.1 itself names, with no invented heuristics.
 has been handled throughout this sprint.

@@ -36,6 +36,13 @@
       "when": 1785091793332,
       "tag": "0004_idempotency_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785110907955,
+      "tag": "0005_sprint3_lead_scoring",
+      "breakpoints": true
     }
   ]
 }

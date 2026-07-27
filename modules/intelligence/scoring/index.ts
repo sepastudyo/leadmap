@@ -1,7 +1,12 @@
+import "server-only";
+
 /**
  * Modular Lead Score engine: data-driven rules, sandboxed expression
  * evaluation, explainable + reproducible scoring (architecture.md §10).
- *
- * Not implemented yet — scoped for Sprint 3 (Business Intelligence).
+ * Sprint 3 Phase 3.5.
  */
-export {};
+
+export * from "./context";
+export * from "./engine";
+export * from "./expression";
+export * from "./rules-repository";
