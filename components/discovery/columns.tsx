@@ -1,6 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
+import Link from "next/link";
 
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -51,7 +52,14 @@ export const discoveryColumns: ColumnDef<DiscoveryBusiness>[] = [
     accessorKey: "name",
     header: "Name",
     size: 240,
-    cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    cell: ({ row }) => (
+      <Link
+        href={`/business/${row.original.id}`}
+        className="font-medium underline-offset-4 hover:underline"
+      >
+        {row.original.name}
+      </Link>
+    ),
   },
   {
     id: "category",

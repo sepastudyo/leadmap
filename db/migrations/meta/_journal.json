@@ -43,6 +43,13 @@
       "when": 1785110907955,
       "tag": "0005_sprint3_lead_scoring",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785113002011,
+      "tag": "0006_sprint3_website_analyses",
+      "breakpoints": true
     }
   ]
 }

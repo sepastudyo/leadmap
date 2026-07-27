@@ -65,3 +65,15 @@ export const SEO_TITLE_MIN_LENGTH = 10;
 export const SEO_TITLE_MAX_LENGTH = 60;
 export const SEO_DESCRIPTION_MIN_LENGTH = 50;
 export const SEO_DESCRIPTION_MAX_LENGTH = 160;
+
+/** §9.1 [12 Assemble] "analyzer_version" — stamped on every persisted
+ * `website_analyses` row so a future analyzer change is distinguishable
+ * from the data it produced under an older version. Bump manually when
+ * a stage's extraction logic changes in a way that could change output
+ * for the same input page. */
+export const ANALYZER_VERSION = "1.0.0";
+
+/** §6.1 "Website analysis | website_analyses + expires_at | 30–90 days
+ * (our data)" — the midpoint of that range; our own derived data, so a
+ * longer TTL is fine, tunable without a schema change. */
+export const WEBSITE_ANALYSIS_TTL_DAYS = 60;

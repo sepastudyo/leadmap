@@ -7,6 +7,8 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
+import type { ScoreBreakdownEntry } from "@/modules/intelligence/scoring/engine";
+
 import { businesses } from "./businesses";
 
 /**
@@ -16,9 +18,14 @@ import { businesses } from "./businesses";
  * `ruleset_version (int)` · `computed_at`.
  *
  * `businesses 1─1 lead_scores` (§5.3) — one current row per business,
- * upserted on `business_id` (mirrors `website_analyses`'s documented
- * "one current row per business" shape, even though that table isn't
- * built yet — persisting *to* it is out of this phase's scope).
+ * upserted on `business_id`, matching `website_analyses`'s same
+ * "one current row per business" shape now that both exist.
+ * `breakdown` is `.$type()`-annotated against `ScoreBreakdownEntry[]`
+ * (the engine's own output shape, `modules/intelligence/scoring/
+ * engine.ts`) — added as part of the Sprint 3 finalization's Business
+ * Detail Page, which reads a persisted score back and needs it typed,
+ * not `unknown`; type-only import, no runtime dependency on the
+ * scoring module from the schema layer.
  */
 export const leadScores = pgTable(
   "lead_scores",
@@ -29,7 +36,7 @@ export const leadScores = pgTable(
       .unique()
       .references(() => businesses.id),
     total: integer("total").notNull(),
-    breakdown: jsonb("breakdown").notNull(),
+    breakdown: jsonb("breakdown").notNull().$type<ScoreBreakdownEntry[]>(),
     rulesetVersion: integer("ruleset_version").notNull(),
     computedAt: timestamp("computed_at", { withTimezone: true })
       .notNull()

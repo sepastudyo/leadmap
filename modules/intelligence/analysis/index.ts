@@ -2,41 +2,20 @@ import "server-only";
 
 import { analysisTargetUrlSchema } from "@/lib/validation";
 
-import { detectCms, type CmsDetectionResult } from "./cms";
-import type { FetchedResource } from "./guarded-fetch";
-import { extractMetadata, type PageMetadata } from "./metadata";
+import { detectCms } from "./cms";
+import { extractMetadata } from "./metadata";
 import { fetchPage } from "./page";
 import { parseHtml } from "./parse";
-import {
-  evaluateRobotsTxt,
-  fetchRobotsTxt,
-  type RobotsEvaluation,
-  type RobotsTxtResult,
-} from "./robots";
-import { analyzeSeo, type SeoAnalysis } from "./seo";
-import { analyzeSsl, type SslAnalysis } from "./ssl";
-import {
-  discoverSitemap,
-  evaluateSitemap,
-  type SitemapEvaluation,
-  type SitemapResult,
-} from "./sitemap";
-import { extractSocialLinks, type SocialLinksResult } from "./social-links";
-import {
-  extractOpenGraph,
-  extractTwitterCard,
-  type OpenGraphData,
-  type TwitterCardData,
-} from "./social-meta";
-import {
-  extractStructuredData,
-  type StructuredDataResult,
-} from "./structured-data";
-import {
-  detectTechnologies,
-  type TechnologyDetectionResult,
-} from "./technology";
-import { detectTracking, type TrackingDetectionResult } from "./tracking";
+import { evaluateRobotsTxt, fetchRobotsTxt } from "./robots";
+import { analyzeSeo } from "./seo";
+import { analyzeSsl } from "./ssl";
+import { discoverSitemap, evaluateSitemap } from "./sitemap";
+import { extractSocialLinks } from "./social-links";
+import { extractOpenGraph, extractTwitterCard } from "./social-meta";
+import { extractStructuredData } from "./structured-data";
+import { detectTechnologies } from "./technology";
+import { detectTracking } from "./tracking";
+import type { AcquisitionResult, PageAnalysis } from "./types";
 
 /**
  * Website Analysis pipeline (architecture.md §9). Sprint 3 Phase 3.2
@@ -54,11 +33,13 @@ import { detectTracking, type TrackingDetectionResult } from "./tracking";
  * SSRF-guarded DNS resolution rather than re-fetching the page.
  */
 
+export * from "./assemble";
 export * from "./cms";
 export * from "./guarded-fetch";
 export * from "./metadata";
 export * from "./page";
 export * from "./parse";
+export * from "./persist";
 export * from "./robots";
 export * from "./seo";
 export * from "./sitemap";
@@ -69,12 +50,7 @@ export * from "./ssrf-guard";
 export * from "./structured-data";
 export * from "./technology";
 export * from "./tracking";
-
-export type AcquisitionResult = {
-  page: FetchedResource;
-  robots: RobotsTxtResult | null;
-  sitemap: SitemapResult | null;
-};
+export * from "./types";
 
 /**
  * Runs [1 Acquire] for a single target URL: the page itself, robots.txt,
@@ -100,22 +76,6 @@ export async function acquireWebsite(url: string): Promise<AcquisitionResult> {
 
   return { page, robots, sitemap };
 }
-
-export type PageAnalysis = {
-  acquisition: AcquisitionResult;
-  metadata: PageMetadata;
-  seo: SeoAnalysis;
-  openGraph: OpenGraphData;
-  twitterCard: TwitterCardData;
-  structuredData: StructuredDataResult;
-  ssl: SslAnalysis;
-  cms: CmsDetectionResult;
-  tracking: TrackingDetectionResult;
-  technology: TechnologyDetectionResult;
-  robotsEvaluation: RobotsEvaluation;
-  sitemapEvaluation: SitemapEvaluation;
-  social: SocialLinksResult;
-};
 
 /**
  * [1 Acquire] → [2 Parse] → evaluate, in one call. Fetching happens

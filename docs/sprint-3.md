@@ -803,11 +803,199 @@ unchanged from Phase 3.5 — confirmed by this phase touching only
 `context.ts` (a new field) and `db/seed/index.ts` (new + rebalanced
 data) within `modules/intelligence/scoring/`.
 
-**Sprint 3 status:** every stage architecture.md §9.1's flow diagram
-names — [1 Acquire] through [11 SSL], including [7 Social] — is now
-implemented, along with the full Lead Score engine (§10). What remains
-undelivered from this sprint's original §17 scope is [12 Assemble]/
-[13 Persist] (persisting analysis results to `website_analyses`) and
-the Business Detail Page — both explicitly out of scope for every phase
-run so far and not touched here either.
-has been handled throughout this sprint.
+**Sprint 3 status (superseded by the finalization section below):**
+every stage architecture.md §9.1's flow diagram names — [1 Acquire]
+through [11 SSL], including [7 Social] — is now implemented, along with
+the full Lead Score engine (§10). What remains undelivered from this
+sprint's original §17 scope is [12 Assemble]/[13 Persist] (persisting
+analysis results to `website_analyses`) and the Business Detail Page —
+both explicitly out of scope for every phase run so far and not touched
+here either.
+
+## Sprint 3 finalization — persistence layer + Business Detail Page
+
+Closes the two items the section above flagged as still missing against
+Sprint 3's original Deliverables list: the Website Analysis pipeline's
+[12 Assemble]/[13 Persist] stages, and the Business Detail Page. Both
+were explicitly excluded from every individual phase ("Do NOT
+implement: Business Detail Page," repeated six times) to keep each
+phase's own scope narrow — that exclusion was about sequencing, not
+about removing either item from Sprint 3, confirmed before starting
+this work.
+
+### Persistence layer ([12 Assemble] + [13 Persist])
+
+- [x] `website_analyses` + `analysis_history` schema
+      (`db/schema/website-analyses.ts`, `analysis-history.ts`) — added
+      exactly matching architecture.md §5.2's dictionary for both
+      tables (columns, the `business_id` unique constraint, the
+      `status` enum). Every jsonb column on `website_analyses` is
+      `.$type()`-annotated against the precise shape
+      `assembleAnalysis` produces, so a row read back through Drizzle
+      is a well-typed `AssembledAnalysis`, not `unknown` — the same
+      technique already used for `scoring_rulesets.rule_keys` (Phase
+      3.5) and, retroactively, `lead_scores.breakdown` (annotated in
+      this pass too, since the Business Detail Page needed to read a
+      persisted score back typed). Migration
+      `0006_sprint3_website_analyses.sql` generated cleanly. `analysis
+    _history` is genuinely optional/append-only per §5.2's own
+      description — populated only when `persistAnalysis` overwrites an
+      existing row, never on first analysis.
+- [x] `modules/intelligence/analysis/types.ts` (new): `AcquisitionResult`
+      and `PageAnalysis` moved out of `index.ts` into their own file.
+      Purely structural — `assemble.ts` needs `PageAnalysis`, and
+      `index.ts` needs to export `assembleAnalysis` as a value; keeping
+      both type definitions in `index.ts` itself would have made that a
+      circular module dependency. No behavior change.
+- [x] `assemble.ts` (`assembleAnalysis`) — [12 Assemble] ("normalize →
+      validate (Zod) → content_hash → analyzer_version"), implemented
+      literally: reshapes the already-computed `PageAnalysis` into the
+      `website_analyses` row shape (folding `openGraph`/`twitterCard`
+      into `metadata` per that column's own "title/desc/OG"
+      description, and `technology` into `cms` since architecture's
+      dictionary has no column of its own for that Phase 3.4
+      elaboration), computes `content_hash` via sha256 over a
+      recursively key-sorted JSON serialization (so the hash depends
+      only on content, not incidental key-insertion order), stamps
+      `analyzer_version` (`ANALYZER_VERSION`, `config/constants.ts`),
+      and validates the assembled shape's structural invariants against
+      a new `assembledAnalysisSchema` (`lib/validation/analysis.ts`)
+      before returning.
+- [x] `persist.ts` (`persistAnalysis`, `getWebsiteAnalysis`) —
+      [13 Persist] ("upsert website_analyses (current) + expires_at;
+      (optional) append prior copy to analysis_history"). Runs inside
+      one transaction: read the existing row (if any) → archive it
+      verbatim to `analysis_history` → upsert the new row, keyed on the
+      unique `business_id`.
+- [x] `modules/intelligence/website-analysis.ts`
+      (`getOrRunWebsiteAnalysis`) — the read-through orchestration
+      wiring [1 Acquire] through [13 Persist] into one call, the same
+      lazy-TTL shape `getOrRefreshPlaceDetails` already established: a
+      fresh persisted row serves with no network call; stale/missing
+      runs the full pipeline and persists. A total acquisition failure
+      (site down, SSRF-blocked, timed out) degrades to serving whatever
+      was previously persisted rather than breaking the caller.
+
+**A real bug caught by live verification, not by code review:** the
+first version of `deriveStatus` (inside `assemble.ts`) treated
+`acquisition.sitemap === null` as a "partial" signal, symmetrically
+with `acquisition.robots === null`. Running it against real sites
+(`example.com`, `github.com`) showed **both** — ordinary, healthy,
+fully-reachable sites — coming back `status: "partial"`. The cause:
+`robots.ts`'s `null` only happens on a genuine fetch exception (a real
+degradation, correctly flagged), but `sitemap.ts`'s `discoverSitemap`
+collapses "no sitemap exists (404 on every candidate)" and "genuinely
+unreachable" into the _same_ `null` — and that file's own docstring
+already said so explicitly: "most sites don't have a sitemap, which is
+a normal outcome, not a failure." Treating it as "partial" anyway would
+have made that status the overwhelming common case instead of a
+meaningful signal. Fixed by dropping sitemap unreachability from
+`deriveStatus` entirely; re-verified live afterward — both sites now
+correctly report `status: "ok"`.
+
+### Business Detail Page
+
+- [x] `app/(dashboard)/business/[id]/page.tsx` — the route
+      architecture.md §4's file tree already named. A thin Server
+      Component (architecture.md's own "app/ is thin ... contain no
+      business rules" / "React Server Components: data-heavy views
+      (... business detail ...) render on the server"): looks up the
+      business, calls `getOrRefreshPlaceDetails` (Sprint 3 Phase 3.1's
+      capability — this is the first thing that ever calls it),
+      `getOrRunWebsiteAnalysis`, and the new `getOrComputeLeadScore`
+      (`modules/intelligence/lead-score.ts`) — all three read-through
+      functions this sprint built and left "ready to be called from a
+      business detail page," now actually called. This _is_ "opening a
+      business" (§3), the on-demand trigger the whole sprint was built
+      around.
+- [x] Lead Score orchestration: `getOrComputeLeadScore` deliberately has
+      no TTL — architecture.md §6.1 frames the score as "Recomputed
+      when analysis or ruleset changes | Derived; cheap to recompute"
+      (§10.3: "O(rules) ... trivially cheap"), so it always recomputes
+      from the current business + analysis + active ruleset and
+      persists, rather than serving a possibly-stale cached score. This
+      is exact change-detection without needing explicit invalidation
+      wiring: recomputing on every view costs nothing worth saving.
+- [x] `buildScoringContext`'s input type changed from `PageAnalysis` to
+      `AssembledAnalysis` (`modules/intelligence/scoring/context.ts`) —
+      the one adaptation to the scoring module this finalization made.
+      architecture.md §10.2 literally says "context = flatten(business + latest website_analysis)" — the _persisted_ analysis, not
+      whichever in-memory shape happened to exist when Phase 3.5 was
+      built (before persistence existed at all). Field references
+      updated to match (`sitemapEvaluation`→`sitemap`,
+      `structuredData`→`schemaOrg`); `engine.ts` and `expression.ts`
+      — the actual scoring algorithm — are untouched, consistent with
+      every prior phase's "preserve the current scoring engine."
+- [x] `components/business/{lead-score-card,google-signals,analysis-
+    summary}.tsx` — presentational Server Components (no
+      interactivity, so no `"use client"`) rendering the explainable
+      breakdown, Google Business signals (rating, review count,
+      category, presence — the exact four Sprint 3's Deliverables list
+      names), and a per-stage analysis summary (SSL, SEO, CMS/
+      Technology, Tracking, Social, robots/sitemap).
+- [x] Discovery table wiring: `components/discovery/columns.tsx`'s name
+      cell is now a `<Link>` to `/business/${id}` — without this, the
+      detail page would exist but be unreachable from anywhere in the
+      actual app, and "open a business, run analysis, get an
+      explainable Lead Score" (this sprint's stated milestone) requires
+      a way to open one.
+
+**Verification:** `npm run format`, `npm run lint`, `npx tsc --noEmit`,
+and `npm run build` all pass (same one pre-existing benign warning);
+the `/business/[id]` route appears in the build output. No live
+Postgres is available in this sandbox (same limitation noted
+throughout this sprint), so `persistAnalysis`/`getWebsiteAnalysis`/
+`getOrComputeLeadScore`/the page itself against a real database are
+unverified beyond typecheck + code review. What _was_ verified live,
+without a database: `assembleAnalysis` against `example.com` and
+`github.com` — `content_hash` is a real 64-character sha256 hex digest,
+is byte-identical across repeated calls on identical input (determinism
+carrying through the persistence layer, not just the scoring engine),
+and differs between genuinely different pages; `metadata`/`cms`
+correctly carry `openGraph`/`twitterCard`/`technology` through into
+their merged columns; `assembledAnalysisSchema` accepted every real
+assembled row without a validation error. This live pass is also what
+caught and let this phase fix the `deriveStatus` sitemap bug above.
+Manual, in-browser verification of the Business Detail Page itself
+(the actual rendered UI, Place Details enrichment triggering
+correctly, error states for a missing Google API key or an
+unanalyzable site) has **not** been done in this sandbox — see the
+completion report's "manual verification recommended" section.
+
+**Architecture deviation check for this phase:** two implementation
+decisions worth surfacing, neither a deviation from an architecture
+_decision_: (1) `technology` detection has no `website_analyses` column
+of its own in §5.2's dictionary, so it's nested inside the `cms` jsonb
+column rather than architecture.md being modified to add one — the
+same "don't touch architecture.md, work within what it specifies"
+discipline as every prior phase. (2) `buildScoringContext` now takes
+`AssembledAnalysis` instead of `PageAnalysis` — a correction toward
+§10.2's literal wording ("latest website_analysis"), not away from it.
+Both are documented here rather than silently made. Nothing else
+diverges: every §5.2 table now matches its column list exactly, [12
+Assemble]/[13 Persist] are implemented literally per §9.1's own
+pseudocode, and the Business Detail Page shows exactly the four things
+Sprint 3's Deliverables list names (analysis results, explainable Lead
+Score, Google Business signals: rating, review count, category,
+presence).
+
+## Sprint 3 — final status
+
+Every deliverable in this document's own Deliverables list (top of this
+file) and every named stage in architecture.md §9.1/§10 is now
+implemented:
+
+- Place Details enrichment (Phase 3.1).
+- Website Analysis pipeline, complete: [1 Acquire] (3.2) → [2 Parse]
+  (3.3) → [3 Metadata]/[4 SEO]/[8 Schema-OG] (3.3, gap-closed) →
+  [5 CMS]/[6 Tracking]/[11 SSL] (3.4) → [7 Social] (gap closure) →
+  [9 robots.txt]/[10 sitemap.xml] evaluation (3.4) → [12 Assemble]/
+  [13 Persist] (this finalization).
+- SSRF guards (3.2).
+- Lead Score engine + seed ruleset (3.5, extended in the Social gap
+  closure and this finalization).
+- Business Detail Page (this finalization).
+
+**Working app milestone achieved:** open a business (via the Discovery
+table's link) → Place Details enrich → website analysis run and
+persisted → explainable Lead Score computed and shown.

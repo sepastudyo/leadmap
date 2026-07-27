@@ -5,8 +5,10 @@
  * `audit_logs`), the Sprint 2 shared cache plane baseline (`businesses`,
  * `search_cache`), `idempotency_keys` (architecture.md §12.4 —
  * added outside the original §5.2 dictionary; see the comment in
- * `idempotency-keys.ts` for why), and the Sprint 3 Phase 3.5 Lead Score
- * engine tables (`scoring_rules`, `scoring_rulesets`, `lead_scores`).
+ * `idempotency-keys.ts` for why), the Sprint 3 Phase 3.5 Lead Score
+ * engine tables (`scoring_rules`, `scoring_rulesets`, `lead_scores`),
+ * and the Sprint 3 finalization's Website Analyzer persistence tables
+ * (`website_analyses`, `analysis_history`).
  */
 export * from "./columns";
 export * from "./users";
@@ -19,3 +21,5 @@ export * from "./idempotency-keys";
 export * from "./scoring-rules";
 export * from "./scoring-rulesets";
 export * from "./lead-scores";
+export * from "./website-analyses";
+export * from "./analysis-history";
