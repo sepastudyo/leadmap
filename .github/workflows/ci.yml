@@ -74,16 +74,32 @@ jobs:
   migrate-production:
     name: Apply migrations to production
     # PRODUCTION_DATABASE_URL must be a repository secret, not an
-    # environment secret — environment secrets aren't resolved yet when
-    # a job-level `if:` is evaluated, so this gate would never see them.
+    # environment secret — environment secrets aren't resolved until
+    # the job actually starts, and this job's `environment: production`
+    # gate means they wouldn't be available until it's already running.
     # `environment: production` below is still worth configuring (for
     # protection rules / deployment history); just add the secret at
     # the repo level too. See README.md "Deployment" for the full list
     # of secrets this workflow expects.
+    #
+    # Whether that secret is actually *configured* can't be checked in
+    # an `if:` at all — the `secrets` context isn't available to any
+    # `if:` condition, job- or step-level (confirmed with `actionlint`,
+    # which is also what reported "Unrecognized named-value: 'secrets'"
+    # for this job's `if:` before this fix). Valid contexts there are
+    # `env`, `github`, `inputs`, `job`, `matrix`, `needs`, `runner`,
+    # `steps`, `strategy`, `vars` — no `secrets`. So the secret is piped
+    # into the job-level `env:` below instead (`env:` *can* reference
+    # `secrets`), and the migration step's `if:` checks that `env` var.
+    # The job itself always runs on a push to main; the step — and so
+    # the actual migration — is skipped, not failed, when the secret
+    # isn't configured.
     needs: verify
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.PRODUCTION_DATABASE_URL != ''
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: production
+    env:
+      PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -95,6 +111,7 @@ jobs:
       - run: npm ci
 
       - name: Apply forward-only migrations to production
+        if: env.PRODUCTION_DATABASE_URL != ''
         run: npm run db:migrate
         env:
-          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+          DATABASE_URL: ${{ env.PRODUCTION_DATABASE_URL }}
