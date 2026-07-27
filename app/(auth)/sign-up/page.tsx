@@ -12,6 +12,7 @@ const errorMessages: Record<string, string> = {
   EmailInUse: "An account with this email already exists.",
   CredentialsSignin:
     "Account created, but sign-in failed — try signing in directly.",
+  RateLimited: "Too many attempts — try again in a few minutes.",
 };
 
 export default async function SignUpPage({

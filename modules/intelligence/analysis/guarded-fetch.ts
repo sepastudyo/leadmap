@@ -7,6 +7,7 @@ import {
   ANALYZER_TIMEOUT_MS,
   ANALYZER_USER_AGENT,
 } from "@/config/constants";
+import { captureException } from "@/lib/observability";
 
 import { assertAllowedProtocol, sharedSsrfSafeDispatcher } from "./ssrf-guard";
 
@@ -133,11 +134,19 @@ export async function guardedFetch(
       });
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
+        // A timeout is an expected condition (slow/unreachable site),
+        // not a bug — no report.
         throw new AnalyzerFetchError(
           `Request to ${currentUrl} timed out after ${timeoutMs}ms`,
           error,
         );
       }
+      // The generic failure path: anything from a DNS failure to a
+      // genuine regression in the SSRF-safe dispatcher lands here
+      // indistinguishably from this catch alone — report it so a real
+      // bug doesn't silently vanish into callers that treat every
+      // `AnalyzerFetchError` as "site unreachable".
+      captureException(error);
       throw new AnalyzerFetchError(`Request to ${currentUrl} failed`, error);
     }
 

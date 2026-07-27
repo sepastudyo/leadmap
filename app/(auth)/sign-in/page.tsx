@@ -11,6 +11,7 @@ import { authenticate } from "./actions";
 const errorMessages: Record<string, string> = {
   InvalidInput: "Enter a valid email and password.",
   CredentialsSignin: "Incorrect email or password.",
+  RateLimited: "Too many sign-in attempts — try again in a few minutes.",
 };
 
 export default async function SignInPage({

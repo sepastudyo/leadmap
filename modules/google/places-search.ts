@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 
 import { GoogleApiError } from "./errors";
+import { resolveRequestSignal } from "./request-signal";
 import type { LatLng } from "./types";
 
 /**
@@ -125,7 +126,7 @@ export async function searchPlaces(
         "X-Goog-FieldMask": PLACES_SEARCH_FIELD_MASK,
       },
       body: JSON.stringify(body),
-      signal: options?.signal,
+      signal: resolveRequestSignal(options?.signal),
     },
   );
 

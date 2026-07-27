@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 
 import { GoogleApiError } from "./errors";
+import { resolveRequestSignal } from "./request-signal";
 
 /**
  * Place Details client (architecture.md §7.1 "Place Details |
@@ -70,7 +71,7 @@ export async function getPlaceDetails(
         "X-Goog-Api-Key": apiKey,
         "X-Goog-FieldMask": PLACE_DETAILS_FIELD_MASK,
       },
-      signal: options?.signal,
+      signal: resolveRequestSignal(options?.signal),
     },
   );
 

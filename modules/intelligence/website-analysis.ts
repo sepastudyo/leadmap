@@ -1,5 +1,7 @@
 import "server-only";
 
+import { captureException } from "@/lib/observability";
+
 import {
   analyzePage,
   assembleAnalysis,
@@ -33,14 +35,17 @@ export async function getOrRunWebsiteAnalysis(
     const analysis = await analyzePage(websiteUrl);
     const assembled = assembleAnalysis(analysis);
     return await persistAnalysis(businessId, assembled);
-  } catch {
+  } catch (error) {
     // Unreachable site, SSRF-blocked, timed out, ... — architecture.md
     // §9.3's "a failing stage yields status = partial" is about
     // individual *stages* within a successful acquisition; a total
     // acquisition failure has nothing to assemble at all. Degrade to
     // whatever was already persisted (even if stale) rather than
     // breaking the whole page for a real, common condition (sites go
-    // down, change domains, or start blocking bots).
+    // down, change domains, or start blocking bots) — but still report
+    // it, since this same catch would otherwise indistinguishably
+    // absorb a genuine bug (e.g. a regression in the SSRF guard).
+    captureException(error);
     return existing;
   }
 }

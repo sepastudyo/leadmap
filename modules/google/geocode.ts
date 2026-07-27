@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 
 import { GoogleApiError } from "./errors";
+import { resolveRequestSignal } from "./request-signal";
 import type { LatLng } from "./types";
 
 /**
@@ -51,7 +52,9 @@ export async function geocode(
   url.searchParams.set("address", query);
   url.searchParams.set("key", apiKey);
 
-  const response = await fetch(url, { signal: options?.signal });
+  const response = await fetch(url, {
+    signal: resolveRequestSignal(options?.signal),
+  });
 
   if (!response.ok) {
     throw new GoogleApiError(

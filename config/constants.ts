@@ -26,6 +26,17 @@ export const SEARCH_RATE_LIMIT_MAX = 20;
 export const SEARCH_RATE_LIMIT_WINDOW_MS = 60_000;
 
 /**
+ * Postgres-backed fixed-window rate limit for the auth routes
+ * (architecture.md §13.1 "lockout/rate limiting on auth routes").
+ * Keyed by IP rather than user id, since sign-in/sign-up callers don't
+ * have one yet. A tight window — standard brute-force mitigation.
+ */
+export const AUTH_SIGNIN_RATE_LIMIT_MAX = 5;
+export const AUTH_SIGNIN_RATE_LIMIT_WINDOW_MS = 5 * 60_000;
+export const AUTH_SIGNUP_RATE_LIMIT_MAX = 5;
+export const AUTH_SIGNUP_RATE_LIMIT_WINDOW_MS = 5 * 60_000;
+
+/**
  * §12.4 "the first result is stored briefly and replayed on retry" —
  * long enough to cover realistic client retries (a page reload, a
  * mobile client resuming after a dropped connection), short because
@@ -47,6 +58,17 @@ export const PLACE_DETAILS_TTL_DAYS = 30;
  * time budget is the tightest real constraint"), tunable without a
  * schema change.
  */
+/**
+ * Google Maps Platform clients (architecture.md §18 "Serverless
+ * function time budget is the tightest real constraint"). `searchPlaces`
+ * / `geocode` / `getPlaceDetails` accept a caller `AbortSignal` but
+ * defaulted to none, leaving a slow/hung Google response bounded only
+ * by the outer function timeout — this is the fallback when no
+ * caller-supplied signal is passed, matching the Website Analyzer's
+ * `ANALYZER_TIMEOUT_MS` pattern.
+ */
+export const GOOGLE_API_TIMEOUT_MS = 8_000;
+
 export const ANALYZER_TIMEOUT_MS = 8_000;
 export const ANALYZER_MAX_REDIRECTS = 5;
 export const ANALYZER_MAX_RESPONSE_BYTES = 2_000_000;
